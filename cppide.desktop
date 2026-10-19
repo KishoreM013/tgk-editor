@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=tgk editor
+Comment=Multi-language IDE (C, C++, Java, Python and more) with clangd IntelliSense
+Exec=@EDITOR@ %F
+Icon=tgkeditor
+Terminal=false
+Categories=Development;IDE;
+MimeType=text/x-csrc;text/x-c++src;text/x-java;text/x-python;text/x-script.python;
