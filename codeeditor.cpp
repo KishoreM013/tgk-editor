@@ -3,9 +3,12 @@
 #include <QPainter>
 #include <QTextBlock>
 #include <QTextEdit>
+#include <QTextCharFormat>
 #include <QScrollBar>
 #include <QAbstractItemView>
 #include <QKeyEvent>
+#include <QMouseEvent>
+#include <QToolTip>
 
 CodeEditor::CodeEditor(QWidget* parent) : QPlainTextEdit(parent) {
     m_lineNumberArea = new LineNumberArea(this);
@@ -23,6 +26,7 @@ CodeEditor::CodeEditor(QWidget* parent) : QPlainTextEdit(parent) {
     connect(m_completionTimer, &QTimer::timeout,
             this, &CodeEditor::completionRequested);
 
+    viewport()->setMouseTracking(true); // needed for diagnostic tooltips
     updateLineNumberAreaWidth(0);
     highlightCurrentLine();
     setLineWrapMode(QPlainTextEdit::NoWrap);
@@ -312,6 +316,9 @@ void CodeEditor::setTheme(const Theme& t) {    QPalette p = palette();
     m_lnBg = t.lineNumBg;
     m_lnFg = t.lineNumFg;
     m_lnActiveFg = t.lineNumActiveFg;
+    m_diagError = t.diagError;
+    m_diagWarning = t.diagWarning;
+    m_diagInfo = t.diagInfo;
 
     if (m_completer && m_completer->popup()) {
         QPalette pp = m_completer->popup()->palette();
@@ -328,17 +335,138 @@ void CodeEditor::setTheme(const Theme& t) {    QPalette p = palette();
     viewport()->update();
 }
 
-void CodeEditor::highlightCurrentLine() {
+void CodeEditor::highlightCurrentLine() { updateExtraSelections(); }
+
+QVector<DiagnosticMark> CodeEditor::allDiagnostics() const {
+    QVector<DiagnosticMark> all = m_diags;
+    all += m_buildDiags;
+    return all;
+}
+
+void CodeEditor::setDiagnostics(const QVector<DiagnosticMark>& diags) {
+    m_diags = diags;
+    rebuildDiagnosticIndex();
+    updateExtraSelections();
+    m_lineNumberArea->update();
+    viewport()->update();
+}
+
+void CodeEditor::setBuildDiagnostics(const QVector<DiagnosticMark>& diags) {
+    m_buildDiags = diags;
+    rebuildDiagnosticIndex();
+    updateExtraSelections();
+    m_lineNumberArea->update();
+    viewport()->update();
+}
+
+void CodeEditor::rebuildDiagnosticIndex() {
+    m_diagLineSeverity.clear();
+    for (const DiagnosticMark& d : allDiagnostics()) {
+        auto it = m_diagLineSeverity.find(d.line);
+        if (it == m_diagLineSeverity.end() || d.severity < it.value())
+            m_diagLineSeverity.insert(d.line, d.severity);
+    }
+}
+
+QColor CodeEditor::diagnosticColor(int severity) const {
+    if (severity == 1)
+        return m_diagError;
+    if (severity == 2)
+        return m_diagWarning;
+    return m_diagInfo;
+}
+
+QString CodeEditor::diagnosticText(const DiagnosticMark& mark) const {
+    const QString kind = mark.severity == 1   ? "Error"
+                         : mark.severity == 2 ? "Warning"
+                                              : "Note";
+    return QString("<b>%1</b><br>%2").arg(kind, mark.message.toHtmlEscaped());
+}
+
+void CodeEditor::updateExtraSelections() {
     QList<QTextEdit::ExtraSelection> extraSelections;
 
-    QTextEdit::ExtraSelection selection;
-    selection.format.setBackground(m_currentLineBg);
-    selection.format.setProperty(QTextFormat::FullWidthSelection, true);
-    selection.cursor = textCursor();
-    selection.cursor.clearSelection();
-    extraSelections.append(selection);
+    QTextEdit::ExtraSelection currentLine;
+    currentLine.format.setBackground(m_currentLineBg);
+    currentLine.format.setProperty(QTextFormat::FullWidthSelection, true);
+    currentLine.cursor = textCursor();
+    currentLine.cursor.clearSelection();
+    extraSelections.append(currentLine);
+
+    QTextDocument* doc = document();
+    for (const DiagnosticMark& d : allDiagnostics()) {
+        QTextBlock block = doc->findBlockByNumber(d.line);
+        if (!block.isValid())
+            continue;
+        const QString text = block.text();
+        const int lineLen = text.size();
+        const int startCol = qBound(0, d.col, lineLen);
+        int endCol = lineLen;
+        if (d.endLine <= d.line && d.endCol >= 0) {
+            if (d.endCol <= startCol) {
+                // The compiler only reports a start position: underline the
+                // rest of the token on that line.
+                endCol = startCol;
+                while (endCol < lineLen && !text.at(endCol).isSpace() &&
+                       !QStringLiteral("(){}[];,.").contains(text.at(endCol)))
+                    ++endCol;
+            } else {
+                endCol = qMin(d.endCol, lineLen);
+            }
+        }
+        if (endCol <= startCol)
+            endCol = qMin(lineLen, startCol + 1);
+        if (endCol <= startCol)
+            continue; // empty line: nothing to underline
+
+        QTextEdit::ExtraSelection selection;
+        selection.cursor = QTextCursor(doc);
+        selection.cursor.setPosition(block.position() + startCol);
+        selection.cursor.setPosition(block.position() + endCol,
+                                     QTextCursor::KeepAnchor);
+        selection.format.setUnderlineStyle(QTextCharFormat::WaveUnderline);
+        selection.format.setUnderlineColor(diagnosticColor(d.severity));
+        extraSelections.append(selection);
+    }
 
     setExtraSelections(extraSelections);
+}
+
+void CodeEditor::mouseMoveEvent(QMouseEvent* e) {
+    QPlainTextEdit::mouseMoveEvent(e);
+
+    const QVector<DiagnosticMark> diags = allDiagnostics();
+    if (diags.isEmpty()) {
+        QToolTip::hideText();
+        return;
+    }
+
+    const QTextCursor pos = cursorForPosition(e->pos());
+    const int line = pos.blockNumber();
+    const int col = pos.positionInBlock();
+    const DiagnosticMark* hit = nullptr;
+    for (const DiagnosticMark& d : diags) {
+        if (d.line != line)
+            continue;
+        const int end = (d.endLine > d.line || d.endCol < 0)
+                            ? pos.block().length()
+                            : qMax(d.endCol, d.col + 1);
+        if (col >= d.col && col <= end) {
+            hit = &d;
+            break;
+        }
+    }
+
+    if (hit)
+        QToolTip::showText(e->globalPosition().toPoint(),
+                           diagnosticText(*hit), this);
+    else
+        QToolTip::hideText();
+}
+
+void CodeEditor::leaveEvent(QEvent* e) {
+    QToolTip::hideText();
+    QPlainTextEdit::leaveEvent(e);
 }
 
 void CodeEditor::lineNumberAreaPaintEvent(QPaintEvent* event) {
@@ -363,6 +491,13 @@ void CodeEditor::lineNumberAreaPaintEvent(QPaintEvent* event) {
             }
             painter.drawText(0, top, m_lineNumberArea->width(),
                              fontMetrics().height(), Qt::AlignRight, number);
+
+            auto diag = m_diagLineSeverity.constFind(blockNumber);
+            if (diag != m_diagLineSeverity.constEnd()) {
+                painter.fillRect(
+                    QRect(0, top, 3, qMin(fontMetrics().height(), bottom - top)),
+                    diagnosticColor(diag.value()));
+            }
         }
         block = block.next();
         top = bottom;

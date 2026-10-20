@@ -12,6 +12,7 @@
 #include <QProcess>
 #include <QStackedWidget>
 #include <QTabWidget>
+#include <QTextCharFormat>
 #include <QTextDocument>
 
 #include <cstdio>
@@ -98,6 +99,39 @@ int main(int argc, char** argv) {
     // Modified marker on the tab text.
     auto* editor = qobject_cast<CodeEditor*>(tabs->widget(0));
     check(editor != nullptr, "tab page is an editor");
+
+    // Diagnostics: underlines are drawn, and compiler marks survive refresh
+    // of the clangd ones (and vice versa).
+    auto countWaves = [](CodeEditor* ed) {
+        int n = 0;
+        for (const auto& s : ed->extraSelections())
+            if (s.format.underlineStyle() == QTextCharFormat::WaveUnderline)
+                ++n;
+        return n;
+    };
+    DiagnosticMark err;
+    err.line = 0;
+    err.col = 0;
+    err.endLine = 0;
+    err.endCol = 5;
+    err.severity = 1;
+    err.message = "expected ';'";
+    editor->setDiagnostics({err});
+    check(countWaves(editor) == 1, "diagnostics are underlined in the editor");
+    check(editor->extraSelections().size() >= 2,
+          "squiggles coexist with the current-line highlight");
+
+    DiagnosticMark warn = err;
+    warn.severity = 2;
+    warn.message = "unused variable";
+    editor->setBuildDiagnostics({warn});
+    check(countWaves(editor) == 2,
+          "compiler and clangd squiggles are shown together");
+    editor->setDiagnostics({});
+    check(countWaves(editor) == 1,
+          "clearing clangd marks keeps compiler marks");
+    editor->setBuildDiagnostics({});
+    check(countWaves(editor) == 0, "all diagnostic marks can be cleared");
     editor->document()->setModified(true);
     check(tabs->tabText(0).contains("*"), "modified tab shows a marker");
     editor->document()->setModified(false);

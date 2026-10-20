@@ -16,6 +16,8 @@ struct Theme {
     QColor consoleBg, consoleFg;
     // syntax tokens
     QColor keyword, type, str, chr, num, comment, func, preproc;
+    // diagnostics (squiggles in the editor and gutter markers)
+    QColor diagError, diagWarning, diagInfo;
 };
 
 inline QVector<Theme> builtinThemes() {
@@ -26,7 +28,8 @@ inline QVector<Theme> builtinThemes() {
          "#F0F0F0", "#8A8A8A", "#1E1E1E",
          "#F7F7F7", "#1E1E1E",
          "#000080", "#008080", "#A31515", "#A31515", "#098658",
-         "#6A9955", "#795E26", "#AF00DB"},
+         "#6A9955", "#795E26", "#AF00DB",
+         "#D13438", "#B7791F", "#2B6CB0"},
 
         {// 2. Dark (VS Code dark)
          "dark", "Dark",
@@ -34,7 +37,8 @@ inline QVector<Theme> builtinThemes() {
          "#252526", "#6E7681", "#AEAFAD",
          "#181818", "#CCCCCC",
          "#569CD6", "#4EC9B0", "#CE9178", "#CE9178", "#B5CEA8",
-         "#6A9955", "#DCDCAA", "#C586C0"},
+         "#6A9955", "#DCDCAA", "#C586C0",
+         "#F14C4C", "#CCA700", "#3794FF"},
 
         {// 3. Monokai
          "monokai", "Monokai",
@@ -42,7 +46,8 @@ inline QVector<Theme> builtinThemes() {
          "#272822", "#75715E", "#F8F8F2",
          "#1E1F1C", "#F8F8F2",
          "#F92672", "#66D9EF", "#E6DB74", "#E6DB74", "#AE81FF",
-         "#75715E", "#A6E22E", "#F92672"},
+         "#75715E", "#A6E22E", "#F92672",
+         "#F92672", "#E6DB74", "#66D9EF"},
 
         {// 4. Solarized Light
          "solarized-light", "Solarized Light",
@@ -50,7 +55,8 @@ inline QVector<Theme> builtinThemes() {
          "#EEE8D5", "#93A1A1", "#586E75",
          "#FDF6E3", "#657B83",
          "#268BD2", "#B58900", "#2AA198", "#2AA198", "#D33682",
-         "#93A1A1", "#268BD2", "#CB4B16"},
+         "#93A1A1", "#268BD2", "#CB4B16",
+         "#DC322F", "#B58900", "#268BD2"},
 
         {// 5. Solarized Dark
          "solarized-dark", "Solarized Dark",
@@ -58,7 +64,8 @@ inline QVector<Theme> builtinThemes() {
          "#073642", "#586E75", "#93A1A1",
          "#002B36", "#93A1A1",
          "#268BD2", "#B58900", "#2AA198", "#2AA198", "#D33682",
-         "#586E75", "#268BD2", "#CB4B16"},
+         "#586E75", "#268BD2", "#CB4B16",
+         "#DC322F", "#B58900", "#268BD2"},
     };
 }
 

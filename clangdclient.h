@@ -22,6 +22,7 @@ struct ClangdDiagnostic {
     QString message;
     int severity = 1; // 1=error 2=warning 3=note
     int line = 0, col = 0;
+    int endLine = 0, endCol = 0; // LSP range end (0-based)
 };
 
 // Minimal LSP client that talks to the clangd language server over stdio.

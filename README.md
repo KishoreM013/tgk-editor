@@ -34,6 +34,10 @@ powered by **clangd** (the same engine behind VS Code's C/C++ support).
   files you are working on. Pins are remembered per folder. View → Project
   Sidebar hides/shows the panel (or press **Ctrl+B**). `tgkeditor ~/project`
   opens a folder directly.
+- **Errors underlined in the editor** — clangd and compiler diagnostics show up
+  as red/orange **squiggles** on the offending token, a colored marker in the
+  line-number gutter, and **hovering a squiggle shows the full message**. The
+  Problems pane still lists everything with double-click navigation.
 - Output pane with an **input line** for interactive programs (stdin)
 - Problems pane: compiler/interpreter diagnostics; double-click to jump to line
 - Line numbers, current-line highlight, toolbar buttons showing their shortcuts

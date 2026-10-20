@@ -309,9 +309,13 @@ void ClangdClient::handlePayload(const QByteArray& json) {
             ClangdDiagnostic d;
             d.message = o["message"].toString();
             d.severity = o["severity"].toInt(1);
-            QJsonObject s = o["range"].toObject()["start"].toObject();
+            QJsonObject range = o["range"].toObject();
+            QJsonObject s = range["start"].toObject();
+            QJsonObject e = range["end"].toObject();
             d.line = s["line"].toInt();
             d.col = s["character"].toInt();
+            d.endLine = e["line"].toInt(d.line);
+            d.endCol = e["character"].toInt(d.col);
             diags.append(d);
         }
         emit diagnostics(path, diags);

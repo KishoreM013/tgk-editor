@@ -890,6 +890,8 @@ void Ide::startBuild(bool runAfter) {
     m_console->clear();
     m_problems->setRowCount(0);
     m_buildOutput.clear();
+    for (Doc* d : m_docList)
+        d->editor->setBuildDiagnostics({}); // fresh compiler marks per build
 
     if (m_activeSpec.compile.isEmpty()) {
         // interpreted language — nothing to compile
@@ -1170,6 +1172,43 @@ void Ide::parseBuildErrors(const QString& output) {
     static const QRegularExpression pyRe(
         "File \"(.+)\", line (\\d+)");
 
+    // Map the file name printed by the toolchain back to an open tab so the
+    // error can be underlined in the editor.
+    auto docFor = [this](const QString& printed) -> Doc* {
+        const QFileInfo printedInfo(printed);
+        const QString absolute =
+            printedInfo.isAbsolute()
+                ? printedInfo.absoluteFilePath()
+                : QFileInfo(QFileInfo(m_buildFile).absolutePath() + "/" +
+                            printed).absoluteFilePath();
+        for (Doc* d : m_docList) {
+            if (d->path.isEmpty())
+                continue;
+            if (QFileInfo(d->path).absoluteFilePath() == absolute)
+                return d;
+            if (!printedInfo.isAbsolute() &&
+                QFileInfo(d->path).fileName() == printedInfo.fileName())
+                return d;
+        }
+        return nullptr;
+    };
+
+    QHash<Doc*, QVector<DiagnosticMark>> marks;
+    auto addMark = [&](const QString& printed, int line, int col,
+                       int severity, const QString& message, int endCol) {
+        Doc* d = docFor(printed);
+        if (!d)
+            return;
+        DiagnosticMark m;
+        m.line = qMax(0, line - 1);
+        m.col = qMax(0, col - 1);
+        m.endLine = m.line;
+        m.endCol = endCol;
+        m.severity = severity;
+        m.message = message;
+        marks[d].append(m);
+    };
+
     for (const QString& rawLine : output.split('\n')) {
         QString line = rawLine.trimmed();
         if (line.isEmpty())
@@ -1177,9 +1216,14 @@ void Ide::parseBuildErrors(const QString& output) {
 
         auto m = errRe.match(line);
         if (m.hasMatch()) {
-            addProblemRow(m.captured(4), m.captured(5),
+            const QString kind = m.captured(4);
+            const int severity =
+                kind == "error" ? 1 : kind == "warning" ? 2 : 3;
+            addProblemRow(kind, m.captured(5),
                           QFileInfo(m.captured(1)).fileName(),
                           m.captured(2).toInt(), m.captured(3).toInt());
+            addMark(m.captured(1), m.captured(2).toInt(),
+                    m.captured(3).toInt(), severity, m.captured(5), 0);
             continue;
         }
         auto j = javacRe.match(line);
@@ -1187,6 +1231,8 @@ void Ide::parseBuildErrors(const QString& output) {
             addProblemRow(j.captured(3), j.captured(4),
                           QFileInfo(j.captured(1)).fileName(),
                           j.captured(2).toInt(), 1);
+            addMark(j.captured(1), j.captured(2).toInt(), 1,
+                    j.captured(3) == "error" ? 1 : 2, j.captured(4), -1);
             continue;
         }
         auto p = pyRe.match(line);
@@ -1194,8 +1240,13 @@ void Ide::parseBuildErrors(const QString& output) {
             addProblemRow("error", "Python traceback — see Output pane",
                           QFileInfo(p.captured(1)).fileName(),
                           p.captured(2).toInt(), 1);
+            addMark(p.captured(1), p.captured(2).toInt(), 1, 1,
+                    "Python traceback — see Output pane", -1);
         }
     }
+
+    for (auto it = marks.constBegin(); it != marks.constEnd(); ++it)
+        it.key()->editor->setBuildDiagnostics(it.value());
 }
 
 // ------------------------------------------------------------- completion
@@ -1354,8 +1405,33 @@ void Ide::addProblemRow(const QString& severity, const QString& message,
 
 void Ide::onDiagnostics(const QString& path,
                         const QVector<ClangdDiagnostic>& diags) {
+    Doc* target = nullptr;
+    for (Doc* d : m_docList) {
+        if (d->path == path) {
+            target = d;
+            break;
+        }
+    }
+    if (!target)
+        return;
+
+    QVector<DiagnosticMark> marks;
+    marks.reserve(diags.size());
+    for (const ClangdDiagnostic& d : diags) {
+        DiagnosticMark m;
+        m.line = d.line;
+        m.col = d.col;
+        m.endLine = d.endLine;
+        m.endCol = d.endCol;
+        m.severity = d.severity == 1 ? 1 : d.severity == 2 ? 2 : 3;
+        m.message = d.message;
+        marks.append(m);
+    }
+    target->editor->setDiagnostics(marks); // red squiggles in that tab
+
+    // The Problems table keeps showing the active document.
     Doc* doc = activeDoc();
-    if (!doc || path != doc->path)
+    if (!doc || doc != target)
         return;
     // rebuild rows coming from clangd (keep rows produced by the compiler:
     // they have an absolute file name in col 2 which never matches here —
