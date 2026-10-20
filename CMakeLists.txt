@@ -14,6 +14,7 @@ add_executable(cppide
     highlighter.h highlighter.cpp
     clangdclient.h clangdclient.cpp
     languages.h languages.cpp
+    welcomepage.h welcomepage.cpp
 )
 target_link_libraries(cppide PRIVATE Qt6::Widgets)
 set_target_properties(cppide PROPERTIES OUTPUT_NAME tgkeditor)

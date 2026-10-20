@@ -1,6 +1,7 @@
 #include "ide.h"
 #include "codeeditor.h"
 #include "highlighter.h"
+#include "welcomepage.h"
 
 #include <QActionGroup>
 #include <QApplication>
@@ -23,6 +24,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSplitter>
+#include <QStackedWidget>
 #include <QScrollBar>
 #include <QSettings>
 #include <QAbstractItemView>
@@ -85,8 +87,11 @@ Ide::Ide(QWidget* parent) : QMainWindow(parent) {
 
     applyTheme(findTheme(QSettings().value("theme", "classic").toString()));
 
+    loadRecent();
+    refreshRecent();
+
     resize(1200, 800);
-    setWindowTitle(defaultTitle());
+    setWindowTitle("tgk editor");
     statusBar()->showMessage("Ready — F9 compiles & runs, Ctrl+Space completes");
 }
 
@@ -109,6 +114,9 @@ void Ide::applyTheme(const Theme& t) {
     tp.setColor(QPalette::Text, t.consoleFg);
     tp.setColor(QPalette::AlternateBase, t.currentLineBg);
     m_problems->setPalette(tp);
+
+    if (m_welcome)
+        m_welcome->applyTheme(t);
 }
 
 void Ide::setupUi() {
@@ -158,7 +166,18 @@ void Ide::setupUi() {
     splitter->addWidget(bottom);
     splitter->setStretchFactor(0, 3);
     splitter->setStretchFactor(1, 1);
-    setCentralWidget(splitter);
+
+    // home page (index 0) / editor (index 1)
+    m_welcome = new WelcomePage(this);
+    connect(m_welcome, &WelcomePage::newFileRequested, this, &Ide::newFile);
+    connect(m_welcome, &WelcomePage::openFileRequested, this, &Ide::openFile);
+    connect(m_welcome, &WelcomePage::fileActivated, this,
+            &Ide::openFileFromPath);
+
+    m_stack = new QStackedWidget(this);
+    m_stack->addWidget(m_welcome);
+    m_stack->addWidget(splitter);
+    setCentralWidget(m_stack);
 
     m_posLabel = new QLabel("Ln 1, Col 1", this);
     m_intelLabel = new QLabel("IntelliSense: off", this);
@@ -173,10 +192,14 @@ void Ide::setupActions() {
     QMenu* fileMenu = menuBar()->addMenu("&File");
     fileMenu->addAction("&New", this, &Ide::newFile, QKeySequence::New);
     fileMenu->addAction("&Open…", this, &Ide::openFile, QKeySequence::Open);
+    m_recentMenu = fileMenu->addMenu("Recent &Files");
+    fileMenu->addSeparator();
     fileMenu->addAction("&Save", this, &Ide::saveFile, QKeySequence::Save);
     fileMenu->addAction("Save &As…", this, &Ide::saveFileAs,
                         QKeySequence::SaveAs);
     fileMenu->addSeparator();
+    fileMenu->addAction("&Close File", this, &Ide::closeFile,
+                        QKeySequence(Qt::CTRL | Qt::Key_W));
     fileMenu->addAction("&Language Settings…", this,
                         &Ide::showLanguageSettings);
     fileMenu->addSeparator();
@@ -209,7 +232,9 @@ void Ide::setupActions() {
         a->setChecked(t.id == currentTheme);
         connect(a, &QAction::triggered, this, [this, t] {
             applyTheme(t);
-            QSettings().setValue("theme", t.id);
+            QSettings s;
+            s.setValue("theme", t.id);
+            s.sync();
             statusBar()->showMessage("Theme: " + t.name, 2000);
         });
     }
@@ -234,6 +259,7 @@ void Ide::setupActions() {
     tb->addAction("New\n(Ctrl+N)", this, &Ide::newFile);
     tb->addAction("Open\n(Ctrl+O)", this, &Ide::openFile);
     tb->addAction("Save\n(Ctrl+S)", this, &Ide::saveFile);
+    tb->addAction("Home\n(Ctrl+W)", this, &Ide::closeFile);
     tb->addSeparator();
     tb->addAction("Comment\n(Ctrl+\\)", this, &Ide::toggleComment);
     tb->addSeparator();
@@ -263,6 +289,7 @@ void Ide::newFile() {
     setWindowTitle(defaultTitle());
     m_editor->document()->setModified(false);
     updateLanguageForFile();
+    m_stack->setCurrentIndex(1);
     statusBar()->showMessage("New file", 2000);
 }
 
@@ -277,6 +304,8 @@ void Ide::openFile() {
 }
 
 void Ide::openFileFromPath(const QString& path) {
+    if (!maybeSave())
+        return;
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
         QMessageBox::warning(this, "tgk editor",
@@ -288,6 +317,8 @@ void Ide::openFileFromPath(const QString& path) {
     m_editor->document()->setModified(false);
     setWindowTitle(defaultTitle());
     updateLanguageForFile();
+    m_stack->setCurrentIndex(1);
+    addRecent(path);
     statusBar()->showMessage("Opened " + path, 2000);
 }
 
@@ -335,7 +366,92 @@ bool Ide::saveFileAs() {
         return false;
     m_currentFile = path;
     setWindowTitle(defaultTitle());
-    return saveFile();
+    if (!saveFile())
+        return false;
+    m_stack->setCurrentIndex(1);
+    addRecent(path);
+    return true;
+}
+
+void Ide::showHome() {
+    refreshRecent();
+    m_stack->setCurrentIndex(0);
+    setWindowTitle("tgk editor");
+    statusBar()->showMessage(
+        "Home — double-click a recent file to reopen it", 3000);
+}
+
+void Ide::closeFile() {
+    if (!maybeSave())
+        return;
+    m_editor->clear();
+    m_currentFile.clear();
+    m_editor->document()->setModified(false);
+    m_problems->setRowCount(0);
+    m_console->clear();
+    showHome();
+}
+
+void Ide::loadRecent() {
+    m_recent = QSettings().value("recentFiles").toStringList();
+    QStringList filtered;
+    for (const QString& p : m_recent)
+        if (QFileInfo::exists(p) && !filtered.contains(p))
+            filtered.append(p);
+    if (filtered.size() > 10)
+        filtered = filtered.mid(0, 10);
+    if (filtered != m_recent) {
+        m_recent = filtered;
+        saveRecent();
+    }
+}
+
+void Ide::saveRecent() {
+    QSettings s;
+    s.setValue("recentFiles", m_recent);
+    s.sync(); // survive crashes / forced exits
+}
+
+void Ide::addRecent(const QString& path) {
+    QString p = QFileInfo(path).canonicalFilePath();
+    if (p.isEmpty())
+        p = QFileInfo(path).absoluteFilePath();
+    m_recent.removeAll(p);
+    m_recent.prepend(p);
+    while (m_recent.size() > 10)
+        m_recent.removeLast();
+    saveRecent();
+    refreshRecent();
+}
+
+void Ide::refreshRecent() {
+    if (m_welcome)
+        m_welcome->setRecentFiles(m_recent);
+    rebuildRecentMenu();
+}
+
+void Ide::rebuildRecentMenu() {
+    if (!m_recentMenu)
+        return;
+    m_recentMenu->clear();
+    if (m_recent.isEmpty()) {
+        QAction* a = m_recentMenu->addAction("(no recent files)");
+        a->setEnabled(false);
+        return;
+    }
+    for (const QString& p : m_recent) {
+        QFileInfo fi(p);
+        QAction* a = m_recentMenu->addAction(fi.fileName() + "  —  " +
+                                             fi.absolutePath());
+        connect(a, &QAction::triggered, this,
+                [this, p] { openFileFromPath(p); });
+    }
+    m_recentMenu->addSeparator();
+    m_recentMenu->addAction("Clear Recent Files", this, [this] {
+        m_recent.clear();
+        saveRecent();
+        refreshRecent();
+    });
 }
 
 bool Ide::maybeSave() {

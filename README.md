@@ -20,6 +20,9 @@ powered by **clangd** (the same engine behind VS Code's C/C++ support).
 - Output pane with an **input line** for interactive programs (stdin)
 - Problems pane: compiler/interpreter diagnostics; double-click to jump to line
 - Line numbers, current-line highlight, toolbar buttons showing their shortcuts
+- **Home page with recent files** — the app opens to a start screen showing the
+  last 10 files you worked on; click one to reopen it instantly. Also available
+  under File → Recent Files. Ctrl+W returns to the home page.
 
 ## Build & install
 
@@ -47,6 +50,7 @@ Requires: Qt6 (Widgets, Gui), g++, clangd.
 | Ctrl+\\ | Toggle comment (uses `//` or `#` per language) |
 | Ctrl+Space | Code completion (C/C++) |
 | Ctrl+S / Ctrl+O / Ctrl+N | Save / Open / New |
+| Ctrl+W | Close file and return to the home page |
 
 ## Language configuration
 

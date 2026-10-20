@@ -18,6 +18,9 @@ class QLineEdit;
 class QLabel;
 class QTabWidget;
 class QCloseEvent;
+class QStackedWidget;
+class QMenu;
+class WelcomePage;
 
 class Ide : public QMainWindow {
     Q_OBJECT
@@ -65,6 +68,13 @@ private:
     void updateLanguageForFile();
     bool askToolchain(LanguageSpec& spec);
     void showLanguageSettings();
+    void showHome();
+    void closeFile();
+    void loadRecent();
+    void saveRecent();
+    void addRecent(const QString& path);
+    void refreshRecent();
+    void rebuildRecentMenu();
 
     // editor
     CodeEditor* m_editor = nullptr;
@@ -93,6 +103,12 @@ private:
     QLineEdit* m_inputLine = nullptr;
     QLabel* m_posLabel = nullptr;
     QLabel* m_intelLabel = nullptr;
+
+    // home page / recent files
+    QStackedWidget* m_stack = nullptr;
+    WelcomePage* m_welcome = nullptr;
+    QMenu* m_recentMenu = nullptr;
+    QStringList m_recent;
 
     // document
     QString m_currentFile;
