@@ -14,6 +14,7 @@ set(APP_SOURCES
     clangdclient.h clangdclient.cpp
     languages.h languages.cpp
     welcomepage.h welcomepage.cpp
+    projectpanel.h projectpanel.cpp
 )
 
 add_executable(cppide main.cpp ${APP_SOURCES})
@@ -30,6 +31,13 @@ target_link_libraries(clangd_test PRIVATE Qt6::Core)
 # Headless test of multi-tab handling
 add_executable(tabs_test tabs_test.cpp ${APP_SOURCES})
 target_link_libraries(tabs_test PRIVATE Qt6::Widgets)
+
+# Headless test of the project tree (pins / "only pinned" filter)
+add_executable(project_test
+    project_test.cpp
+    projectpanel.h projectpanel.cpp
+)
+target_link_libraries(project_test PRIVATE Qt6::Widgets)
 
 # Headless icon generator (renders the app icon PNG)
 add_executable(icon_gen icon_gen.cpp)

@@ -2,6 +2,7 @@
 #include <QIcon>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 
 #include "ide.h"
 
@@ -22,7 +23,9 @@ int main(int argc, char** argv) {
     args.removeFirst(); // program name
     for (const QString& a : args) {
         QFileInfo fi(a);
-        if (fi.isFile())
+        if (fi.isDir())
+            w.openProjectFolder(fi.absoluteFilePath());
+        else if (fi.isFile())
             w.openFileFromPath(fi.absoluteFilePath());
     }
     return app.exec();

@@ -25,13 +25,16 @@ class QStackedWidget;
 class QMenu;
 class QCheckBox;
 class QTimer;
+class QDockWidget;
 class WelcomePage;
+class ProjectPanel;
 
 class Ide : public QMainWindow {
     Q_OBJECT
 public:
     explicit Ide(QWidget* parent = nullptr);
     void openFileFromPath(const QString& path);
+    void openProjectFolder(const QString& dir);
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -143,4 +146,8 @@ private:
     WelcomePage* m_welcome = nullptr;
     QMenu* m_recentMenu = nullptr;
     QStringList m_recent;
+
+    // project sidebar
+    QDockWidget* m_projectDock = nullptr;
+    ProjectPanel* m_project = nullptr;
 };

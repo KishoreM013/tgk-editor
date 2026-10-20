@@ -1,6 +1,7 @@
 #include "ide.h"
 #include "codeeditor.h"
 #include "highlighter.h"
+#include "projectpanel.h"
 #include "welcomepage.h"
 
 #include <QActionGroup>
@@ -9,6 +10,8 @@
 #include <QCloseEvent>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDir>
+#include <QDockWidget>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -112,6 +115,12 @@ Ide::Ide(QWidget* parent) : QMainWindow(parent) {
     loadRecent();
     refreshRecent();
 
+    QString projectRoot =
+        QSettings().value("projectRoot", QDir::homePath()).toString();
+    if (!QFileInfo(projectRoot).isDir())
+        projectRoot = QDir::homePath();
+    m_project->setRoot(projectRoot);
+
     resize(1200, 800);
     setWindowTitle("tgk editor");
     statusBar()->showMessage("Ready — F9 compiles & runs, Ctrl+Space completes");
@@ -185,6 +194,8 @@ void Ide::applyTheme(const Theme& t) {    m_theme = t;
 
     if (m_welcome)
         m_welcome->applyTheme(t);
+    if (m_project)
+        m_project->applyTheme(t);
 }
 
 void Ide::setupUi() {
@@ -257,6 +268,27 @@ void Ide::setupUi() {
     m_stack->addWidget(splitter);
     setCentralWidget(m_stack);
 
+    // Project sidebar: folder tree with per-file pins.
+    m_projectDock = new QDockWidget("Project", this);
+    m_projectDock->setObjectName("projectDock");
+    m_projectDock->setAllowedAreas(Qt::LeftDockWidgetArea |
+                                   Qt::RightDockWidgetArea);
+    m_project = new ProjectPanel(m_projectDock);
+    m_projectDock->setWidget(m_project);
+    m_projectDock->setMinimumWidth(180);
+    addDockWidget(Qt::LeftDockWidgetArea, m_projectDock);
+    resizeDocks({m_projectDock}, {250}, Qt::Horizontal);
+
+    connect(m_project, &ProjectPanel::fileActivated, this,
+            &Ide::openFileFromPath);
+    connect(m_project, &ProjectPanel::rootChanged, this,
+            [this](const QString& dir) {
+                QSettings s;
+                s.setValue("projectRoot", dir);
+                s.sync();
+                statusBar()->showMessage("Folder: " + dir, 2500);
+            });
+
     m_posLabel = new QLabel("Ln 1, Col 1", this);
     m_intelLabel = new QLabel("IntelliSense: off", this);
     statusBar()->addPermanentWidget(m_posLabel);
@@ -268,6 +300,9 @@ void Ide::setupActions() {
     QMenu* fileMenu = menuBar()->addMenu("&File");
     fileMenu->addAction("&New", this, &Ide::newFile, QKeySequence::New);
     fileMenu->addAction("&Open…", this, &Ide::openFile, QKeySequence::Open);
+    fileMenu->addAction("Open F&older…", this,
+                        [this] { m_project->openFolderDialog(); },
+                        QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
     m_recentMenu = fileMenu->addMenu("Recent &Files");
     fileMenu->addSeparator();
     fileMenu->addAction("&Save", this, &Ide::saveFile, QKeySequence::Save);
@@ -316,8 +351,12 @@ void Ide::setupActions() {
     buildMenu->addAction("&Stop program", this, &Ide::stopProgram,
                          QKeySequence(Qt::Key_F10));
 
-    // View menu — themes
+    // View menu — sidebar and themes
     QMenu* viewMenu = menuBar()->addMenu("&View");
+    QAction* projectToggle = m_projectDock->toggleViewAction();
+    projectToggle->setText("Project &Sidebar");
+    viewMenu->addAction(projectToggle);
+    viewMenu->addSeparator();
     QActionGroup* themeGroup = new QActionGroup(this);
     QString currentTheme =
         QSettings().value("theme", "classic").toString();
@@ -652,6 +691,7 @@ void Ide::openFileFromPath(const QString& path) {
             m_stack->setCurrentIndex(1);
             setActiveDoc(doc);
             addRecent(doc->path);
+            m_project->revealFile(doc->path);
             return;
         }
     }
@@ -668,7 +708,16 @@ void Ide::openFileFromPath(const QString& path) {
     if (doc)
         doc->editor->setFocus();
     addRecent(path);
+    m_project->revealFile(path);
     statusBar()->showMessage("Opened " + path, 2000);
+}
+
+void Ide::openProjectFolder(const QString& dir) {
+    if (!QFileInfo(dir).isDir())
+        return;
+    m_project->setRoot(dir);
+    m_projectDock->show();
+    statusBar()->showMessage("Folder: " + dir, 3000);
 }
 
 bool Ide::saveFile() { return saveDoc(activeDoc()); }

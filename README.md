@@ -28,6 +28,12 @@ powered by **clangd** (the same engine behind VS Code's C/C++ support).
   persisted between sessions
 - **Auto-save checkbox** in the toolbar — saves changed files 1.2 s after you
   stop typing (untitled files wait until you give them a name)
+- **Project sidebar** — File → Open Folder (Ctrl+Shift+O) shows the whole folder
+  as a tree; double-click a file to open it as a tab. Tick files to pin them,
+  then enable **Only pinned files** to hide everything else and keep just the
+  files you are working on. Pins are remembered per folder. View → Project
+  Sidebar hides/shows the panel. `tgkeditor ~/project` opens a folder
+  directly.
 - Output pane with an **input line** for interactive programs (stdin)
 - Problems pane: compiler/interpreter diagnostics; double-click to jump to line
 - Line numbers, current-line highlight, toolbar buttons showing their shortcuts
@@ -62,6 +68,7 @@ Requires: Qt6 (Widgets, Gui), g++, clangd.
 | Ctrl+Space | Code completion (C/C++) |
 | Tab / Shift+Tab | Indent / outdent the selected lines |
 | Ctrl+S / Ctrl+O / Ctrl+N | Save / Open / New |
+| Ctrl+Shift+O | Open a folder in the project sidebar |
 | Ctrl+W | Close the current tab |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Ctrl+H | Home page (open files stay open) |
@@ -95,4 +102,6 @@ paths containing spaces (e.g. `~/my projects/x.py`) work correctly.
 - `CPPIDE_TRACE=1` prints the raw clangd LSP traffic to stderr.
 - `build/clangd_test` is a headless end-to-end test of the IntelliSense
   pipeline (should print `PASS`).
+- `build/tabs_test` checks tabs, auto-pairs, indentation and auto-save.
+- `build/project_test` checks the sidebar pins and the "only pinned" filter.
 - `build/icon_gen out.png` renders the app icon.
