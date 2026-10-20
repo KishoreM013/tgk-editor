@@ -1,9 +1,11 @@
 #include "clangdclient.h"
 
 #include <QCoreApplication>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QRegularExpression>
+#include <QStandardPaths>
 #include <QUrl>
 #include <cstdio>
 
@@ -41,7 +43,8 @@ ClangdClient::~ClangdClient() {
     }
 }
 
-bool ClangdClient::start(const QString& rootDir) {
+bool ClangdClient::start(const QString& rootDir,
+                         const QString& compileCommandsDir) {
     if (m_proc && m_proc->state() != QProcess::NotRunning)
         return true;
 
@@ -65,9 +68,30 @@ bool ClangdClient::start(const QString& rootDir) {
                 });
     }
 
-    m_proc->start("clangd",
-                  {"--background-index=false", "--clang-tidy=false",
-                   "--log=error", "-j=2"});
+    QStringList args{"--background-index=false", "--clang-tidy=false",
+                     "--log=error", "-j=2"};
+
+    // Editors like VS Code's clangd extension pass --query-driver so clangd
+    // asks the real compiler for its system include paths. Without it, a GCC
+    // installed in a non-default prefix makes clangd report false errors such
+    // as "'iostream' file not found" right on the #include line, even though
+    // the code compiles fine.
+    QStringList drivers;
+    for (const char* name : {"g++", "c++", "gcc", "cc", "clang++", "clang"}) {
+        const QString path = QStandardPaths::findExecutable(name);
+        if (!path.isEmpty() && !drivers.contains(path))
+            drivers << path;
+    }
+    if (!drivers.isEmpty())
+        args << "--query-driver=" + drivers.join(',');
+
+    // A compilation database built from the project's real compile command
+    // keeps clangd's include paths, -D and -std in sync with the compiler, so
+    // resolved #includes are not reported as errors.
+    if (!compileCommandsDir.isEmpty())
+        args << "--compile-commands-dir=" + compileCommandsDir;
+
+    m_proc->start("clangd", args);
     if (!m_proc->waitForStarted(3000))
         return false;
 

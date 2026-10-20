@@ -33,7 +33,8 @@ public:
     explicit ClangdClient(QObject* parent = nullptr);
     ~ClangdClient() override;
 
-    bool start(const QString& rootDir);
+    bool start(const QString& rootDir,
+               const QString& compileCommandsDir = QString());
     bool isRunning() const;
 
     void openDocument(const QString& path, const QString& text);

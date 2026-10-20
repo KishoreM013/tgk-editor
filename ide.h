@@ -88,6 +88,7 @@ private:
                        const QString& file, int line, int col);
     void jumpTo(const QString& file, int line, int col);
     void syncDocument();
+    QString prepareCompileCommands(const QString& root);
     void applyTheme(const Theme& theme);
     void setIndent(int width, bool useTabs);
     void setAutoSave(bool enabled);
@@ -122,6 +123,8 @@ private:
     QStringListModel* m_completerModel = nullptr;
     QVector<ClangdItem> m_items;
     ClangdClient* m_clangd = nullptr;
+    QString m_clangdCompileDir; // synthetic compilation database (may be empty)
+    QString m_clangdRoot;
     int m_prefixStart = 0; // cursor position where current word starts
 
     // build / run

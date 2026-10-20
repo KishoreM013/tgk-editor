@@ -122,11 +122,18 @@ int main(int argc, char** argv) {
           "squiggles coexist with the current-line highlight");
 
     DiagnosticMark warn = err;
+    warn.col = 1;
+    warn.endCol = 2;
     warn.severity = 2;
     warn.message = "unused variable";
     editor->setBuildDiagnostics({warn});
     check(countWaves(editor) == 2,
           "compiler and clangd squiggles are shown together");
+    DiagnosticMark duplicate = err;
+    duplicate.message = "same range, different message";
+    editor->setDiagnostics({err, duplicate});
+    check(countWaves(editor) == 2,
+          "duplicate diagnostics on one range share a single squiggle");
     editor->setDiagnostics({});
     check(countWaves(editor) == 1,
           "clearing clangd marks keeps compiler marks");

@@ -9,6 +9,7 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QToolTip>
+#include <algorithm>
 
 CodeEditor::CodeEditor(QWidget* parent) : QPlainTextEdit(parent) {
     m_lineNumberArea = new LineNumberArea(this);
@@ -376,11 +377,11 @@ QColor CodeEditor::diagnosticColor(int severity) const {
     return m_diagInfo;
 }
 
-QString CodeEditor::diagnosticText(const DiagnosticMark& mark) const {
-    const QString kind = mark.severity == 1   ? "Error"
-                         : mark.severity == 2 ? "Warning"
-                                              : "Note";
-    return QString("<b>%1</b><br>%2").arg(kind, mark.message.toHtmlEscaped());
+QString CodeEditor::severityLabel(int severity) const {
+    return severity == 1   ? "Error"
+           : severity == 2 ? "Warning"
+           : severity == 3 ? "Information"
+                           : "Hint";
 }
 
 void CodeEditor::updateExtraSelections() {
@@ -393,8 +394,27 @@ void CodeEditor::updateExtraSelections() {
     currentLine.cursor.clearSelection();
     extraSelections.append(currentLine);
 
-    QTextDocument* doc = document();
+    // VS Code-style: several diagnostics on the exact same range are drawn as
+    // one squiggle, colored by the most severe of them.
+    QHash<QString, int> seen;
+    QVector<DiagnosticMark> marks;
     for (const DiagnosticMark& d : allDiagnostics()) {
+        const QString key = QString("%1:%2:%3:%4")
+                                .arg(d.line)
+                                .arg(d.col)
+                                .arg(d.endLine)
+                                .arg(d.endCol);
+        auto it = seen.find(key);
+        if (it == seen.end()) {
+            seen.insert(key, marks.size());
+            marks.append(d);
+        } else if (d.severity < marks[it.value()].severity) {
+            marks[it.value()].severity = d.severity;
+        }
+    }
+
+    QTextDocument* doc = document();
+    for (const DiagnosticMark& d : marks) {
         QTextBlock block = doc->findBlockByNumber(d.line);
         if (!block.isValid())
             continue;
@@ -441,27 +461,51 @@ void CodeEditor::mouseMoveEvent(QMouseEvent* e) {
         return;
     }
 
-    const QTextCursor pos = cursorForPosition(e->pos());
-    const int line = pos.blockNumber();
-    const int col = pos.positionInBlock();
-    const DiagnosticMark* hit = nullptr;
+    // Hovering anywhere on the line lists every problem on that line, the way
+    // VS Code shows all diagnostics for the hovered range.
+    const int line = cursorForPosition(e->pos()).blockNumber();
+    QVector<DiagnosticMark> hits;
     for (const DiagnosticMark& d : diags) {
-        if (d.line != line)
-            continue;
-        const int end = (d.endLine > d.line || d.endCol < 0)
-                            ? pos.block().length()
-                            : qMax(d.endCol, d.col + 1);
-        if (col >= d.col && col <= end) {
-            hit = &d;
-            break;
-        }
+        if (d.line == line || (d.endLine > d.line && line > d.line &&
+                               line <= d.endLine))
+            hits.append(d);
+    }
+    if (hits.isEmpty()) {
+        QToolTip::hideText();
+        return;
     }
 
-    if (hit)
-        QToolTip::showText(e->globalPosition().toPoint(),
-                           diagnosticText(*hit), this);
-    else
-        QToolTip::hideText();
+    std::sort(hits.begin(), hits.end(), [](const DiagnosticMark& a,
+                                           const DiagnosticMark& b) {
+        return a.col < b.col || (a.col == b.col && a.severity < b.severity);
+    });
+
+    QString html;
+    QVector<DiagnosticMark> unique;
+    for (const DiagnosticMark& d : hits) {
+        const bool duplicate =
+            std::any_of(unique.cbegin(), unique.cend(),
+                        [&d](const DiagnosticMark& u) {
+                            return u.message == d.message;
+                        });
+        if (!duplicate)
+            unique.append(d);
+    }
+    const int shown = qMin(unique.size(), 8);
+    for (int i = 0; i < shown; ++i) {
+        const DiagnosticMark& d = unique.at(i);
+        html += QString("<span style='color:%1'><b>%2</b></span>: %3<br>")
+                    .arg(diagnosticColor(d.severity).name(),
+                         severityLabel(d.severity),
+                         d.message.toHtmlEscaped());
+    }
+    if (unique.size() > shown)
+        html += QString("… and %1 more in the Problems pane")
+                    .arg(unique.size() - shown);
+    if (html.endsWith("<br>"))
+        html.chop(4);
+
+    QToolTip::showText(e->globalPosition().toPoint(), html, this);
 }
 
 void CodeEditor::leaveEvent(QEvent* e) {

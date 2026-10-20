@@ -8,6 +8,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QCloseEvent>
+#include <QCryptographicHash>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -20,6 +21,9 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QInputDialog>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenuBar>
@@ -30,6 +34,7 @@
 #include <QShortcut>
 #include <QSplitter>
 #include <QStackedWidget>
+#include <QStandardPaths>
 #include <QScrollBar>
 #include <QSettings>
 #include <QSignalBlocker>
@@ -1259,6 +1264,73 @@ void Ide::syncDocument() {
         m_clangd->changeDocument(doc->path, doc->editor->toPlainText());
 }
 
+// Editors that get good clangd results (VS Code, Qt Creator, Emacs) feed it a
+// compile_commands.json so IntelliSense sees the same -I/-D/-std flags as the
+// compiler. When the project has none, build a small one in the cache from the
+// language's configured compile command. This stops false "file not found"
+// squiggles on #include lines for headers the real build resolves fine.
+QString Ide::prepareCompileCommands(const QString& root) {
+    if (root.isEmpty())
+        return {};
+
+    // Never shadow a compilation database the project already provides.
+    for (QDir dir(root);;) {
+        if (QFile::exists(dir.filePath("compile_commands.json")))
+            return {};
+        if (!dir.cdUp())
+            break;
+    }
+
+    QJsonArray commands;
+    for (Doc* doc : m_docList) {
+        if (doc->path.isEmpty())
+            continue;
+        const LanguageSpec* spec = m_langs.forFile(doc->path);
+        if (!spec || (spec->id != "cpp" && spec->id != "c") ||
+            spec->compile.isEmpty())
+            continue;
+
+        QStringList args = LanguageRegistry::expandArgs(spec->compile, doc->path);
+        if (args.isEmpty())
+            continue;
+        // clangd only needs front-end flags; keep "-o out" out of the database.
+        for (int i = 0; i + 1 < args.size();) {
+            if (args.at(i) == "-o") {
+                args.removeAt(i);
+                args.removeAt(i);
+            } else {
+                ++i;
+            }
+        }
+
+        const QFileInfo fi(doc->path);
+        QJsonObject entry;
+        entry["directory"] = fi.absolutePath();
+        entry["file"] = fi.absoluteFilePath();
+        entry["arguments"] = QJsonArray::fromStringList(args);
+        commands.append(entry);
+    }
+    if (commands.isEmpty())
+        return {};
+
+    QString base = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+    if (base.isEmpty())
+        base = QDir::tempPath();
+    const QByteArray hash =
+        QCryptographicHash::hash(root.toUtf8(), QCryptographicHash::Sha1)
+            .toHex()
+            .left(12);
+    const QString dir = base + "/clangd-" + QString::fromLatin1(hash);
+    if (!QDir().mkpath(dir))
+        return {};
+
+    QFile file(dir + "/compile_commands.json");
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return {};
+    file.write(QJsonDocument(commands).toJson(QJsonDocument::Indented));
+    return dir;
+}
+
 void Ide::onCompletionRequested() {
     Doc* doc = activeDoc();
     if (!doc || !m_editor)
@@ -1287,7 +1359,9 @@ void Ide::onCompletionRequested() {
 
     if (!m_clangd->isRunning()) {
         QFileInfo fi(doc->path);
-        if (!m_clangd->start(fi.absolutePath())) {
+        m_clangdRoot = fi.absolutePath();
+        m_clangdCompileDir = prepareCompileCommands(m_clangdRoot);
+        if (!m_clangd->start(m_clangdRoot, m_clangdCompileDir)) {
             m_intelLabel->setText("IntelliSense: clangd not found");
             return;
         }
@@ -1295,6 +1369,10 @@ void Ide::onCompletionRequested() {
     }
 
     if (!doc->clangdOpen) {
+        // Opening a sibling file may add flags to the compilation database.
+        if (!m_clangdCompileDir.isEmpty() &&
+            QFileInfo(doc->path).absolutePath() == m_clangdRoot)
+            prepareCompileCommands(m_clangdRoot);
         m_clangd->openDocument(doc->path, doc->editor->toPlainText());
         doc->clangdOpen = true;
         m_intelLabel->setText("IntelliSense: on");

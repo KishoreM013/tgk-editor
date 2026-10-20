@@ -70,7 +70,7 @@ private:
     void rebuildDiagnosticIndex();
     void updateExtraSelections();
     QColor diagnosticColor(int severity) const;
-    QString diagnosticText(const DiagnosticMark& mark) const;
+    QString severityLabel(int severity) const;
 
     QWidget* m_lineNumberArea;
     QCompleter* m_completer = nullptr;
