@@ -355,6 +355,8 @@ void Ide::setupActions() {
     QMenu* viewMenu = menuBar()->addMenu("&View");
     QAction* projectToggle = m_projectDock->toggleViewAction();
     projectToggle->setText("Project &Sidebar");
+    projectToggle->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_B));
+    projectToggle->setToolTip("Show/hide the project sidebar (Ctrl+B)");
     viewMenu->addAction(projectToggle);
     viewMenu->addSeparator();
     QActionGroup* themeGroup = new QActionGroup(this);

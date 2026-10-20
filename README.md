@@ -32,8 +32,8 @@ powered by **clangd** (the same engine behind VS Code's C/C++ support).
   as a tree; double-click a file to open it as a tab. Tick files to pin them,
   then enable **Only pinned files** to hide everything else and keep just the
   files you are working on. Pins are remembered per folder. View → Project
-  Sidebar hides/shows the panel. `tgkeditor ~/project` opens a folder
-  directly.
+  Sidebar hides/shows the panel (or press **Ctrl+B**). `tgkeditor ~/project`
+  opens a folder directly.
 - Output pane with an **input line** for interactive programs (stdin)
 - Problems pane: compiler/interpreter diagnostics; double-click to jump to line
 - Line numbers, current-line highlight, toolbar buttons showing their shortcuts
@@ -69,6 +69,7 @@ Requires: Qt6 (Widgets, Gui), g++, clangd.
 | Tab / Shift+Tab | Indent / outdent the selected lines |
 | Ctrl+S / Ctrl+O / Ctrl+N | Save / Open / New |
 | Ctrl+Shift+O | Open a folder in the project sidebar |
+| Ctrl+B | Show / hide the project sidebar |
 | Ctrl+W | Close the current tab |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Ctrl+H | Home page (open files stay open) |

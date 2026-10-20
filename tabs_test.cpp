@@ -2,8 +2,10 @@
 // Run with: QT_QPA_PLATFORM=offscreen ./build/tabs_test
 
 #include <QApplication>
+#include <QAction>
 #include <QCheckBox>
 #include <QDir>
+#include <QDockWidget>
 #include <QFile>
 #include <QKeyEvent>
 #include <QPlainTextEdit>
@@ -53,6 +55,25 @@ int main(int argc, char** argv) {
 
     Ide w;
     w.show();
+
+    // The project sidebar is reachable again with Ctrl+B even after closing.
+    auto* dock = w.findChild<QDockWidget*>("projectDock");
+    check(dock != nullptr, "project sidebar exists");
+    QAction* sidebarAction = nullptr;
+    for (QAction* a : w.findChildren<QAction*>()) {
+        if (a->shortcut() == QKeySequence(Qt::CTRL | Qt::Key_B)) {
+            sidebarAction = a;
+            break;
+        }
+    }
+    check(sidebarAction != nullptr, "Ctrl+B is bound to the project sidebar");
+    const bool sidebarWasVisible = dock && dock->isVisible();
+    if (sidebarAction)
+        sidebarAction->trigger();
+    check(dock && dock->isVisible() != sidebarWasVisible,
+          "Ctrl+B hides and shows the sidebar");
+    if (sidebarAction)
+        sidebarAction->trigger();
 
     auto* tabs = w.findChild<QTabWidget*>();
     auto* stack = w.findChild<QStackedWidget*>();
