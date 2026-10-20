@@ -1,7 +1,10 @@
 #pragma once
 
+#include <QFont>
+#include <QHash>
 #include <QMainWindow>
 #include <QProcess>
+#include <QStringList>
 #include <QVector>
 
 #include "clangdclient.h"
@@ -36,6 +39,8 @@ private slots:
     void openFile();
     bool saveFile();
     bool saveFileAs();
+    void closeTab(int index);
+    void onTabChanged(int index);
     void compileOnly();
     void compileAndRun();
     void stopProgram();
@@ -50,10 +55,25 @@ private slots:
                        const QVector<ClangdDiagnostic>& diags);
     void onCellDoubleClicked(int row, int column);
     void updateStatusCursor();
+    void showHome();
+    void showEditorPage();
 
 private:
+    struct Doc; // one open file / tab
+
     void setupActions();
     void setupUi();
+    Doc* createDoc(const QString& path, const QString& content);
+    Doc* activeDoc() const;
+    Doc* docAt(int index) const;
+    void setActiveDoc(Doc* doc);
+    void removeDoc(Doc* doc);
+    void updateTabTitle(Doc* doc);
+    void updateWindowTitle();
+    bool saveDoc(Doc* doc);
+    bool saveDocAs(Doc* doc);
+    bool maybeSaveDoc(Doc* doc);
+    bool maybeSaveAll();
     void startBuild(bool runAfter);
     void runProgram();
     void appendConsole(const QString& text);
@@ -62,30 +82,33 @@ private:
                        const QString& file, int line, int col);
     void jumpTo(const QString& file, int line, int col);
     void syncDocument();
-    bool maybeSave();
-    QString defaultTitle() const;
     void applyTheme(const Theme& theme);
-    void updateLanguageForFile();
     bool askToolchain(LanguageSpec& spec);
     void showLanguageSettings();
-    void showHome();
-    void closeFile();
     void loadRecent();
     void saveRecent();
     void addRecent(const QString& path);
     void refreshRecent();
     void rebuildRecentMenu();
 
-    // editor
+    // open documents / tabs
+    QTabWidget* m_docTabs = nullptr;
+    QHash<CodeEditor*, Doc*> m_docs;
+    QVector<Doc*> m_docList;
+    Theme m_theme;
+    QFont m_editorFont;
+    int m_untitledCounter = 0;
+
+    // active document (shortcuts into the active Doc)
     CodeEditor* m_editor = nullptr;
     CppHighlighter* m_highlighter = nullptr;
+    QString m_currentFile;
 
     // completion
     QCompleter* m_completer = nullptr;
     QStringListModel* m_completerModel = nullptr;
     QVector<ClangdItem> m_items;
     ClangdClient* m_clangd = nullptr;
-    QString m_openPath;    // file currently open in clangd
     int m_prefixStart = 0; // cursor position where current word starts
 
     // build / run
@@ -93,6 +116,7 @@ private:
     QProcess* m_runProc = nullptr;
     bool m_runAfterBuild = false;
     QString m_binaryPath;
+    QString m_buildFile; // file the current build/run belongs to
     QString m_buildOutput;
     LanguageRegistry m_langs;
     LanguageSpec m_activeSpec;
@@ -109,7 +133,4 @@ private:
     WelcomePage* m_welcome = nullptr;
     QMenu* m_recentMenu = nullptr;
     QStringList m_recent;
-
-    // document
-    QString m_currentFile;
 };

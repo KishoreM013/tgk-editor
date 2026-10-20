@@ -43,7 +43,14 @@ WelcomePage::WelcomePage(QWidget* parent) : QWidget(parent) {
     buttons->addWidget(openBtn);
     buttons->addStretch(1);
     outer->addLayout(buttons);
-    outer->addSpacing(26);
+
+    m_back = new QPushButton("←  Back to open files", this);
+    m_back->setFlat(true);
+    m_back->hide();
+    connect(m_back, &QPushButton::clicked, this,
+            &WelcomePage::backToEditorRequested);
+    outer->addWidget(m_back, 0, Qt::AlignHCenter);
+    outer->addSpacing(18);
 
     auto* recentLabel = new QLabel("Recent files", this);
     QFont rf = recentLabel->font();
@@ -81,6 +88,11 @@ WelcomePage::WelcomePage(QWidget* parent) : QWidget(parent) {
     outer->addWidget(hint);
 
     outer->addStretch(2);
+}
+
+void WelcomePage::setBackVisible(bool visible) {
+    if (m_back)
+        m_back->setVisible(visible);
 }
 
 void WelcomePage::setRecentFiles(const QStringList& files) {

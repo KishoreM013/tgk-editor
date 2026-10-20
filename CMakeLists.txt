@@ -7,8 +7,7 @@ set(CMAKE_AUTOMOC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
-add_executable(cppide
-    main.cpp
+set(APP_SOURCES
     ide.h ide.cpp
     codeeditor.h codeeditor.cpp
     highlighter.h highlighter.cpp
@@ -16,6 +15,8 @@ add_executable(cppide
     languages.h languages.cpp
     welcomepage.h welcomepage.cpp
 )
+
+add_executable(cppide main.cpp ${APP_SOURCES})
 target_link_libraries(cppide PRIVATE Qt6::Widgets)
 set_target_properties(cppide PROPERTIES OUTPUT_NAME tgkeditor)
 
@@ -25,6 +26,10 @@ add_executable(clangd_test
     clangdclient.h clangdclient.cpp
 )
 target_link_libraries(clangd_test PRIVATE Qt6::Core)
+
+# Headless test of multi-tab handling
+add_executable(tabs_test tabs_test.cpp ${APP_SOURCES})
+target_link_libraries(tabs_test PRIVATE Qt6::Widgets)
 
 # Headless icon generator (renders the app icon PNG)
 add_executable(icon_gen icon_gen.cpp)

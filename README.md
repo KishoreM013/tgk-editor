@@ -8,6 +8,9 @@ powered by **clangd** (the same engine behind VS Code's C/C++ support).
 
 - **Multi-language**: C, C++, Java, Python, JavaScript, TypeScript, Go,
   Rust, Shell, Ruby, PHP — auto-detected by file extension
+- **Tabs** — open as many files as you like; each one gets its own tab at the
+  top with its file name (a `*` marks unsaved changes). Ctrl+Tab switches,
+  Ctrl+W closes. `tgkeditor a.cpp b.py` opens several files at once.
 - **F9 = Compile & Run** — one key, no terminal commands
 - **First run per language asks once**, then remembers your toolchain commands
   in `~/.config/tgk/tgkeditor.json` (editable JSON; add your own languages!)
@@ -22,7 +25,7 @@ powered by **clangd** (the same engine behind VS Code's C/C++ support).
 - Line numbers, current-line highlight, toolbar buttons showing their shortcuts
 - **Home page with recent files** — the app opens to a start screen showing the
   last 10 files you worked on; click one to reopen it instantly. Also available
-  under File → Recent Files. Ctrl+W returns to the home page.
+  under File → Recent Files. Ctrl+H shows the home page, or close the last tab.
 
 ## Build & install
 
@@ -50,7 +53,9 @@ Requires: Qt6 (Widgets, Gui), g++, clangd.
 | Ctrl+\\ | Toggle comment (uses `//` or `#` per language) |
 | Ctrl+Space | Code completion (C/C++) |
 | Ctrl+S / Ctrl+O / Ctrl+N | Save / Open / New |
-| Ctrl+W | Close file and return to the home page |
+| Ctrl+W | Close the current tab |
+| Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
+| Ctrl+H | Home page (open files stay open) |
 
 ## Language configuration
 

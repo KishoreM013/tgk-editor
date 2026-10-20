@@ -22,10 +22,8 @@ int main(int argc, char** argv) {
     args.removeFirst(); // program name
     for (const QString& a : args) {
         QFileInfo fi(a);
-        if (fi.isFile()) {
+        if (fi.isFile())
             w.openFileFromPath(fi.absoluteFilePath());
-            break;
-        }
     }
     return app.exec();
 }

@@ -21,8 +21,10 @@
 #include <QLineEdit>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QPointer>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QShortcut>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QScrollBar>
@@ -39,25 +41,38 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
+// One open file / tab. The active editor shortcuts (m_editor, m_highlighter,
+// m_currentFile) always point at the currently selected Doc.
+struct Ide::Doc {
+    CodeEditor* editor = nullptr;
+    CppHighlighter* highlighter = nullptr;
+    QString path;     // empty = never saved
+    QString untitled; // display name while unsaved
+    bool clangdOpen = false;
+
+    QString displayName() const {
+        return path.isEmpty() ? untitled : QFileInfo(path).fileName();
+    }
+};
+
 Ide::Ide(QWidget* parent) : QMainWindow(parent) {
-    m_editor = new CodeEditor(this);
-    m_highlighter = new CppHighlighter(m_editor->document());
     m_langs.load(); // built-ins + ~/.config/tgk/tgkeditor.json
+
+    m_editorFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    m_editorFont.setPointSize(11);
 
     m_completer = new QCompleter(this);
     m_completerModel = new QStringListModel(this);
     m_completer->setModel(m_completerModel);
-    m_editor->setCompleter(m_completer);
     connect(m_completer, QOverload<const QModelIndex&>::of(&QCompleter::activated),
             this, &Ide::insertCompletion);
-    connect(m_editor, &CodeEditor::completionRequested, this,
-            &Ide::onCompletionRequested);
 
     m_clangd = new ClangdClient(this);
     connect(m_clangd, &ClangdClient::diagnostics, this, &Ide::onDiagnostics);
     connect(m_clangd, &ClangdClient::serverDied, this, [this] {
         m_intelLabel->setText("IntelliSense: offline");
-        m_openPath.clear();
+        for (Doc* d : m_docList)
+            d->clangdOpen = false;
     });
 
     m_buildProc = new QProcess(this);
@@ -81,10 +96,6 @@ Ide::Ide(QWidget* parent) : QMainWindow(parent) {
     setupUi();
     setupActions();
 
-    QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-    mono.setPointSize(11);
-    m_editor->setFont(mono);
-
     applyTheme(findTheme(QSettings().value("theme", "classic").toString()));
 
     loadRecent();
@@ -96,8 +107,11 @@ Ide::Ide(QWidget* parent) : QMainWindow(parent) {
 }
 
 void Ide::applyTheme(const Theme& t) {
-    m_editor->setTheme(t);
-    m_highlighter->setTheme(t);
+    m_theme = t;
+    for (Doc* d : m_docList) {
+        d->editor->setTheme(t);
+        d->highlighter->setTheme(t);
+    }
 
     QPalette cp = m_console->palette();
     cp.setColor(QPalette::Base, t.consoleBg);
@@ -162,7 +176,15 @@ void Ide::setupUi() {
 
     bottomLayout->addWidget(tabs);
 
-    splitter->addWidget(m_editor);
+    m_docTabs = new QTabWidget(splitter);
+    m_docTabs->setTabsClosable(true);
+    m_docTabs->setMovable(true);
+    m_docTabs->setDocumentMode(true);
+    m_docTabs->setElideMode(Qt::ElideRight);
+    connect(m_docTabs, &QTabWidget::tabCloseRequested, this, &Ide::closeTab);
+    connect(m_docTabs, &QTabWidget::currentChanged, this, &Ide::onTabChanged);
+
+    splitter->addWidget(m_docTabs);
     splitter->addWidget(bottom);
     splitter->setStretchFactor(0, 3);
     splitter->setStretchFactor(1, 1);
@@ -173,6 +195,8 @@ void Ide::setupUi() {
     connect(m_welcome, &WelcomePage::openFileRequested, this, &Ide::openFile);
     connect(m_welcome, &WelcomePage::fileActivated, this,
             &Ide::openFileFromPath);
+    connect(m_welcome, &WelcomePage::backToEditorRequested, this,
+            &Ide::showEditorPage);
 
     m_stack = new QStackedWidget(this);
     m_stack->addWidget(m_welcome);
@@ -183,8 +207,6 @@ void Ide::setupUi() {
     m_intelLabel = new QLabel("IntelliSense: off", this);
     statusBar()->addPermanentWidget(m_posLabel);
     statusBar()->addPermanentWidget(m_intelLabel);
-    connect(m_editor, &QPlainTextEdit::cursorPositionChanged, this,
-            &Ide::updateStatusCursor);
 }
 
 void Ide::setupActions() {
@@ -198,8 +220,11 @@ void Ide::setupActions() {
     fileMenu->addAction("Save &As…", this, &Ide::saveFileAs,
                         QKeySequence::SaveAs);
     fileMenu->addSeparator();
-    fileMenu->addAction("&Close File", this, &Ide::closeFile,
+    fileMenu->addAction("&Close Tab", this,
+                        [this] { closeTab(m_docTabs->currentIndex()); },
                         QKeySequence(Qt::CTRL | Qt::Key_W));
+    fileMenu->addAction("&Home / Welcome Page", this, &Ide::showHome,
+                        QKeySequence(Qt::CTRL | Qt::Key_H));
     fileMenu->addAction("&Language Settings…", this,
                         &Ide::showLanguageSettings);
     fileMenu->addSeparator();
@@ -259,137 +284,350 @@ void Ide::setupActions() {
     tb->addAction("New\n(Ctrl+N)", this, &Ide::newFile);
     tb->addAction("Open\n(Ctrl+O)", this, &Ide::openFile);
     tb->addAction("Save\n(Ctrl+S)", this, &Ide::saveFile);
-    tb->addAction("Home\n(Ctrl+W)", this, &Ide::closeFile);
+    tb->addAction("Home\n(Ctrl+H)", this, &Ide::showHome);
     tb->addSeparator();
     tb->addAction("Comment\n(Ctrl+\\)", this, &Ide::toggleComment);
     tb->addSeparator();
     tb->addAction("Compile\n(F8)", this, &Ide::compileOnly);
     tb->addAction("▶ Run\n(F9)", this, &Ide::compileAndRun);
     tb->addAction("■ Stop\n(F10)", this, &Ide::stopProgram);
+
+    // Tab switching: Ctrl+Tab / Ctrl+Shift+Tab
+    auto* nextTab = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Tab), this);
+    connect(nextTab, &QShortcut::activated, this, [this] {
+        const int n = m_docTabs->count();
+        if (n < 2)
+            return;
+        m_stack->setCurrentIndex(1);
+        m_docTabs->setCurrentIndex((m_docTabs->currentIndex() + 1) % n);
+    });
+    auto* prevTab =
+        new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Tab), this);
+    connect(prevTab, &QShortcut::activated, this, [this] {
+        const int n = m_docTabs->count();
+        if (n < 2)
+            return;
+        m_stack->setCurrentIndex(1);
+        m_docTabs->setCurrentIndex((m_docTabs->currentIndex() - 1 + n) % n);
+    });
 }
 
-QString Ide::defaultTitle() const {
-    QString name = m_currentFile.isEmpty()
-                       ? "untitled.cpp"
-                       : QFileInfo(m_currentFile).fileName();
-    return name + "[*] — tgk editor";
+static CppHighlighter::Lang languageForPath(const LanguageRegistry& langs,
+                                            const QString& path,
+                                            QString* displayName = nullptr) {
+    CppHighlighter::Lang lang = CppHighlighter::Lang::Cpp;
+    if (displayName)
+        displayName->clear();
+    if (path.isEmpty()) {
+        if (displayName)
+            *displayName = "C++ (default for new files)";
+        return lang;
+    }
+    const LanguageSpec* spec = langs.forFile(path);
+    if (!spec) {
+        if (displayName)
+            *displayName = "plain text";
+        return lang;
+    }
+    if (displayName)
+        *displayName = spec->displayName;
+    if (spec->id == "java")
+        lang = CppHighlighter::Lang::Java;
+    else if (spec->id == "python")
+        lang = CppHighlighter::Lang::Python;
+    return lang;
+}
+
+Ide::Doc* Ide::createDoc(const QString& path, const QString& content) {
+    auto* doc = new Doc;
+    doc->path = path;
+    if (path.isEmpty()) {
+        ++m_untitledCounter;
+        doc->untitled = m_untitledCounter == 1
+                            ? QString("untitled.cpp")
+                            : QString("untitled%1.cpp").arg(m_untitledCounter);
+    }
+
+    doc->editor = new CodeEditor(m_docTabs);
+    doc->highlighter = new CppHighlighter(doc->editor->document());
+    doc->editor->setFont(m_editorFont);
+    doc->editor->setCompleter(m_completer);
+    doc->editor->setPlainText(content);
+    doc->editor->document()->setModified(false);
+
+    doc->highlighter->setLanguage(languageForPath(m_langs, path));
+    doc->highlighter->setTheme(m_theme);
+    doc->editor->setTheme(m_theme);
+
+    const int index = m_docTabs->addTab(doc->editor, doc->displayName());
+    m_docs.insert(doc->editor, doc);
+    m_docList.append(doc);
+
+    connect(doc->editor, &CodeEditor::completionRequested, this,
+            &Ide::onCompletionRequested);
+    connect(doc->editor, &QPlainTextEdit::cursorPositionChanged, this,
+            &Ide::updateStatusCursor);
+    connect(doc->editor->document(), &QTextDocument::modificationChanged, this,
+            [this, doc](bool) {
+                updateTabTitle(doc);
+                if (doc->editor == m_editor)
+                    updateWindowTitle();
+            });
+
+    updateTabTitle(doc);
+    m_docTabs->setTabToolTip(index, path.isEmpty() ? doc->untitled : path);
+    setActiveDoc(doc);
+    return doc;
+}
+
+Ide::Doc* Ide::docAt(int index) const {
+    if (!m_docTabs || index < 0 || index >= m_docTabs->count())
+        return nullptr;
+    auto* editor = qobject_cast<CodeEditor*>(m_docTabs->widget(index));
+    return editor ? m_docs.value(editor) : nullptr;
+}
+
+Ide::Doc* Ide::activeDoc() const {
+    return m_editor ? m_docs.value(m_editor) : nullptr;
+}
+
+void Ide::setActiveDoc(Doc* doc) {
+    if (!doc)
+        return;
+    const bool changed = (doc->editor != m_editor);
+    m_editor = doc->editor;
+    m_highlighter = doc->highlighter;
+    m_currentFile = doc->path;
+    if (m_completer)
+        m_completer->popup()->hide();
+    m_items.clear();
+    if (changed)
+        m_problems->setRowCount(0); // diagnostics are per active document
+    if (m_docTabs->currentWidget() != doc->editor)
+        m_docTabs->setCurrentWidget(doc->editor);
+    m_editor->setCompleter(m_completer);
+    updateStatusCursor();
+    updateWindowTitle();
+
+    QString langName;
+    languageForPath(m_langs, doc->path, &langName);
+    statusBar()->showMessage("Language: " + langName, 1500);
+}
+
+void Ide::onTabChanged(int index) {
+    Doc* doc = docAt(index);
+    if (!doc || doc->editor == m_editor)
+        return; // nullptr while a tab is being removed, or self-triggered
+    setActiveDoc(doc);
+}
+
+void Ide::updateTabTitle(Doc* doc) {
+    if (!doc)
+        return;
+    const int idx = m_docTabs->indexOf(doc->editor);
+    if (idx < 0)
+        return;
+    const bool dirty = doc->editor->document()->isModified();
+    m_docTabs->setTabText(idx, doc->displayName() + (dirty ? " *" : ""));
+}
+
+void Ide::updateWindowTitle() {
+    Doc* doc = activeDoc();
+    if (!doc) {
+        setWindowTitle("tgk editor");
+        return;
+    }
+    setWindowTitle(doc->displayName() + "[*] — tgk editor");
+    setWindowModified(doc->editor->document()->isModified());
+}
+
+bool Ide::saveDoc(Doc* doc) {
+    if (!doc)
+        return false;
+    if (doc->path.isEmpty())
+        return saveDocAs(doc);
+    QFile f(doc->path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, "tgk editor",
+                             "Could not save " + doc->path + "\n" +
+                                 f.errorString());
+        return false;
+    }
+    QTextStream out(&f);
+    out << doc->editor->toPlainText();
+    doc->editor->document()->setModified(false);
+    updateTabTitle(doc);
+    updateWindowTitle();
+    statusBar()->showMessage("Saved " + doc->path, 2000);
+    return true;
+}
+
+bool Ide::saveDocAs(Doc* doc) {
+    if (!doc)
+        return false;
+    const QString suggested =
+        doc->path.isEmpty() ? doc->untitled : doc->path;
+    const QString path = QFileDialog::getSaveFileName(
+        this, "Save source file", suggested,
+        "Source files (*.c *.cpp *.cc *.cxx *.h *.hpp *.java *.py *.js *.ts "
+        "*.go *.rs *.sh *.rb *.php);;All files (*)");
+    if (path.isEmpty())
+        return false;
+
+    if (!doc->path.isEmpty() && doc->path != path && doc->clangdOpen) {
+        if (m_clangd->isRunning())
+            m_clangd->closeDocument(doc->path);
+        doc->clangdOpen = false;
+    }
+    doc->path = path;
+    if (!saveDoc(doc))
+        return false;
+
+    doc->highlighter->setLanguage(languageForPath(m_langs, doc->path));
+    updateTabTitle(doc);
+    if (doc->editor == m_editor) {
+        m_currentFile = doc->path;
+        updateWindowTitle();
+    }
+    m_stack->setCurrentIndex(1);
+    m_docTabs->setTabToolTip(m_docTabs->indexOf(doc->editor), doc->path);
+    addRecent(path);
+    return true;
+}
+
+bool Ide::maybeSaveDoc(Doc* doc) {
+    if (!doc || !doc->editor->document()->isModified())
+        return true;
+    auto ret = QMessageBox::question(
+        this, "tgk editor", "Save changes to " + doc->displayName() + "?",
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+        QMessageBox::Save);
+    if (ret == QMessageBox::Save)
+        return saveDoc(doc);
+    return ret == QMessageBox::Discard;
+}
+
+bool Ide::maybeSaveAll() {
+    for (Doc* doc : m_docList) {
+        if (!maybeSaveDoc(doc))
+            return false;
+    }
+    return true;
 }
 
 void Ide::updateStatusCursor() {
+    if (!m_editor) {
+        m_posLabel->setText("Ln —, Col —");
+        return;
+    }
     QTextCursor c = m_editor->textCursor();
     m_posLabel->setText(
         QString("Ln %1, Col %2").arg(c.blockNumber() + 1).arg(c.columnNumber() + 1));
 }
 
 void Ide::newFile() {
-    if (!maybeSave())
-        return;
-    m_editor->clear();
-    m_currentFile.clear();
-    setWindowTitle(defaultTitle());
-    m_editor->document()->setModified(false);
-    updateLanguageForFile();
+    Doc* doc = createDoc(QString(), QString());
     m_stack->setCurrentIndex(1);
+    if (doc)
+        doc->editor->setFocus();
     statusBar()->showMessage("New file", 2000);
 }
 
 void Ide::openFile() {
-    if (!maybeSave())
-        return;
-    QString path = QFileDialog::getOpenFileName(
-        this, "Open source file", QString(),
-        "C/C++ files (*.c *.cpp *.cc *.cxx *.h *.hpp);;All files (*)");
-    if (!path.isEmpty())
+    const QStringList paths = QFileDialog::getOpenFileNames(
+        this, "Open source files", QString(),
+        "Source files (*.c *.cpp *.cc *.cxx *.h *.hpp *.java *.py *.js *.ts "
+        "*.go *.rs *.sh *.rb *.php);;All files (*)");
+    for (const QString& path : paths)
         openFileFromPath(path);
 }
 
 void Ide::openFileFromPath(const QString& path) {
-    if (!maybeSave())
-        return;
+    const QFileInfo info(path);
+    // Already open? Just switch to its tab — never open the same file twice.
+    for (Doc* doc : m_docList) {
+        if (doc->path.isEmpty())
+            continue;
+        if (QFileInfo(doc->path) == info) {
+            m_stack->setCurrentIndex(1);
+            setActiveDoc(doc);
+            addRecent(doc->path);
+            return;
+        }
+    }
+
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
         QMessageBox::warning(this, "tgk editor",
                              "Could not open " + path + "\n" + f.errorString());
         return;
     }
-    m_editor->setPlainText(QString::fromUtf8(f.readAll()));
-    m_currentFile = path;
-    m_editor->document()->setModified(false);
-    setWindowTitle(defaultTitle());
-    updateLanguageForFile();
+    Doc* doc = createDoc(info.absoluteFilePath(),
+                         QString::fromUtf8(f.readAll()));
     m_stack->setCurrentIndex(1);
+    if (doc)
+        doc->editor->setFocus();
     addRecent(path);
     statusBar()->showMessage("Opened " + path, 2000);
 }
 
-void Ide::updateLanguageForFile() {
-    CppHighlighter::Lang lang = CppHighlighter::Lang::Cpp;
-    const LanguageSpec* spec = m_langs.forFile(m_currentFile);
-    if (m_currentFile.isEmpty()) {
-        statusBar()->showMessage("Language: C++ (default for new files)", 2000);
-    } else if (spec) {
-        if (spec->id == "cpp" || spec->id == "c")
-            lang = CppHighlighter::Lang::Cpp;
-        else if (spec->id == "java")
-            lang = CppHighlighter::Lang::Java;
-        else if (spec->id == "python")
-            lang = CppHighlighter::Lang::Python;
-        statusBar()->showMessage("Language: " + spec->displayName, 2000);
-    } else {
-        statusBar()->showMessage("Unknown file type — plain text mode", 2000);
-    }
-    m_highlighter->setLanguage(lang);
-}
+bool Ide::saveFile() { return saveDoc(activeDoc()); }
 
-bool Ide::saveFile() {
-    if (m_currentFile.isEmpty())
-        return saveFileAs();
-    QFile f(m_currentFile);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QMessageBox::warning(this, "tgk editor",
-                             "Could not save " + m_currentFile + "\n" +
-                                 f.errorString());
-        return false;
-    }
-    QTextStream out(&f);
-    out << m_editor->toPlainText();
-    m_editor->document()->setModified(false);
-    statusBar()->showMessage("Saved " + m_currentFile, 2000);
-    return true;
-}
-
-bool Ide::saveFileAs() {
-    QString path = QFileDialog::getSaveFileName(
-        this, "Save source file", "untitled.cpp",
-        "C/C++ files (*.c *.cpp *.cc *.cxx *.h *.hpp)");
-    if (path.isEmpty())
-        return false;
-    m_currentFile = path;
-    setWindowTitle(defaultTitle());
-    if (!saveFile())
-        return false;
-    m_stack->setCurrentIndex(1);
-    addRecent(path);
-    return true;
-}
+bool Ide::saveFileAs() { return saveDocAs(activeDoc()); }
 
 void Ide::showHome() {
     refreshRecent();
+    if (m_welcome)
+        m_welcome->setBackVisible(!m_docList.isEmpty());
     m_stack->setCurrentIndex(0);
     setWindowTitle("tgk editor");
     statusBar()->showMessage(
         "Home — double-click a recent file to reopen it", 3000);
 }
 
-void Ide::closeFile() {
-    if (!maybeSave())
+void Ide::showEditorPage() {
+    if (m_docList.isEmpty()) {
+        showHome();
         return;
-    m_editor->clear();
-    m_currentFile.clear();
-    m_editor->document()->setModified(false);
-    m_problems->setRowCount(0);
-    m_console->clear();
-    showHome();
+    }
+    m_stack->setCurrentIndex(1);
+    if (m_editor)
+        m_editor->setFocus();
+}
+
+void Ide::closeTab(int index) {
+    Doc* doc = docAt(index);
+    if (!doc)
+        return;
+    if (!maybeSaveDoc(doc))
+        return;
+    removeDoc(doc);
+}
+
+void Ide::removeDoc(Doc* doc) {
+    if (!doc)
+        return;
+    const bool wasActive = (doc->editor == m_editor);
+    if (doc->clangdOpen && !doc->path.isEmpty() && m_clangd->isRunning())
+        m_clangd->closeDocument(doc->path);
+
+    m_docs.remove(doc->editor);
+    m_docList.removeAll(doc);
+    const int idx = m_docTabs->indexOf(doc->editor);
+    if (idx >= 0)
+        m_docTabs->removeTab(idx);
+    delete doc->editor; // also drops its signal connections
+    delete doc;
+
+    if (m_docTabs->count() == 0) {
+        m_editor = nullptr;
+        m_highlighter = nullptr;
+        m_currentFile.clear();
+        m_items.clear();
+        showHome();
+    } else if (wasActive || !m_editor) {
+        setActiveDoc(docAt(m_docTabs->currentIndex()));
+    }
 }
 
 void Ide::loadRecent() {
@@ -454,19 +692,8 @@ void Ide::rebuildRecentMenu() {
     });
 }
 
-bool Ide::maybeSave() {
-    if (!m_editor->document()->isModified())
-        return true;
-    auto ret = QMessageBox::question(
-        this, "tgk editor", "Save changes to " + defaultTitle() + "?",
-        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
-    if (ret == QMessageBox::Save)
-        return saveFile();
-    return ret == QMessageBox::Discard;
-}
-
 void Ide::closeEvent(QCloseEvent* event) {
-    if (maybeSave())
+    if (maybeSaveAll())
         event->accept();
     else
         event->ignore();
@@ -478,10 +705,14 @@ void Ide::compileOnly() { startBuild(false); }
 void Ide::compileAndRun() { startBuild(true); }
 
 void Ide::startBuild(bool runAfter) {
-    if (m_currentFile.isEmpty() && !saveFileAs())
+    Doc* doc = activeDoc();
+    if (!doc)
+        return; // no file open
+    if (doc->path.isEmpty() && !saveDocAs(doc))
         return;
-    if (!saveFile())
+    if (!saveDoc(doc))
         return;
+    m_currentFile = doc->path;
 
     const LanguageSpec* spec = m_langs.forFile(m_currentFile);
     if (!spec) {
@@ -501,6 +732,7 @@ void Ide::startBuild(bool runAfter) {
     if (m_runProc->state() != QProcess::NotRunning)
         m_runProc->kill();
 
+    m_buildFile = m_currentFile;
     QFileInfo fi(m_currentFile);
     m_binaryPath = LanguageRegistry::outputPathFor(m_currentFile);
 
@@ -661,10 +893,10 @@ void Ide::onBuildFinished(int exitCode, QProcess::ExitStatus) {
 }
 
 void Ide::runProgram() {
-    QFileInfo fi(m_currentFile);
+    QFileInfo fi(m_buildFile);
     m_console->appendPlainText("\n--- running " + fi.fileName() + " ---\n");
 
-    QString cmd = LanguageRegistry::expand(m_activeSpec.run, m_currentFile);
+    QString cmd = LanguageRegistry::expand(m_activeSpec.run, m_buildFile);
     if (cmd.trimmed().isEmpty()) {
         appendConsole("[No run command configured for " +
                       m_activeSpec.displayName + "]\n");
@@ -692,7 +924,8 @@ void Ide::onRunFinished(int exitCode, QProcess::ExitStatus) {
         appendConsole(out);
     appendConsole(QString("\n[Process exited with code %1]\n").arg(exitCode));
     m_inputLine->setEnabled(false);
-    m_editor->setFocus();
+    if (m_editor)
+        m_editor->setFocus();
 }
 
 void Ide::stopProgram() {
@@ -703,6 +936,8 @@ void Ide::stopProgram() {
 }
 
 void Ide::toggleComment() {
+    if (!m_editor || !m_highlighter)
+        return;
     QTextCursor sel = m_editor->textCursor();
     int startLine = sel.blockNumber();
     int endLine = sel.blockNumber();
@@ -812,18 +1047,22 @@ void Ide::parseBuildErrors(const QString& output) {
 // ------------------------------------------------------------- completion
 
 void Ide::syncDocument() {
-    if (m_currentFile.isEmpty())
+    Doc* doc = activeDoc();
+    if (!doc || doc->path.isEmpty())
         return;
-    if (m_clangd->isRunning())
-        m_clangd->changeDocument(m_currentFile, m_editor->toPlainText());
+    if (doc->clangdOpen && m_clangd->isRunning())
+        m_clangd->changeDocument(doc->path, doc->editor->toPlainText());
 }
 
 void Ide::onCompletionRequested() {
+    Doc* doc = activeDoc();
+    if (!doc || !m_editor)
+        return;
     if (m_highlighter->language() != CppHighlighter::Lang::Cpp) {
         m_intelLabel->setText("IntelliSense: C/C++ only");
         return;
     }
-    if (m_currentFile.isEmpty()) {
+    if (doc->path.isEmpty()) {
         m_intelLabel->setText("IntelliSense: save the file first");
         return;
     }
@@ -842,30 +1081,32 @@ void Ide::onCompletionRequested() {
     m_prefixStart = cur.block().position() + i;
 
     if (!m_clangd->isRunning()) {
-        QFileInfo fi(m_currentFile);
+        QFileInfo fi(doc->path);
         if (!m_clangd->start(fi.absolutePath())) {
             m_intelLabel->setText("IntelliSense: clangd not found");
             return;
         }
         m_intelLabel->setText("IntelliSense: starting…");
-        m_openPath.clear();
     }
 
-    if (m_openPath != m_currentFile) {
-        if (!m_openPath.isEmpty())
-            m_clangd->closeDocument(m_openPath);
-        m_clangd->openDocument(m_currentFile, m_editor->toPlainText());
-        m_openPath = m_currentFile;
+    if (!doc->clangdOpen) {
+        m_clangd->openDocument(doc->path, doc->editor->toPlainText());
+        doc->clangdOpen = true;
         m_intelLabel->setText("IntelliSense: on");
     } else {
         syncDocument();
     }
 
-    m_clangd->completion(m_currentFile, cur.blockNumber(),
-                         cur.columnNumber(),
-                         [this](bool ok, const QVector<ClangdItem>& items) {
+    // Remember which editor asked: the user may switch tabs while clangd works.
+    QPointer<CodeEditor> askingEditor = m_editor;
+    m_clangd->completion(doc->path, cur.blockNumber(), cur.columnNumber(),
+                         [this, askingEditor](
+                             bool ok, const QVector<ClangdItem>& items) {
                              QMetaObject::invokeMethod(
-                                 this, [this, ok, items] {
+                                 this,
+                                 [this, askingEditor, ok, items] {
+                                     if (askingEditor != m_editor)
+                                         return; // switched tabs meanwhile
                                      onCompletionReady(ok, items);
                                  },
                                  Qt::QueuedConnection);
@@ -874,6 +1115,8 @@ void Ide::onCompletionRequested() {
 
 void Ide::onCompletionReady(bool ok, const QVector<ClangdItem>& items) {
     // ignore stale replies if the cursor already moved on
+    if (!m_editor || !m_completer)
+        return;
     QTextCursor cur = m_editor->textCursor();
     if (!ok) {
         m_completer->popup()->hide();
@@ -914,7 +1157,7 @@ void Ide::onCompletionReady(bool ok, const QVector<ClangdItem>& items) {
 }
 
 void Ide::insertCompletion(const QModelIndex& index) {
-    if (!index.isValid() || index.row() >= m_items.size())
+    if (!index.isValid() || index.row() >= m_items.size() || !m_editor)
         return;
     const ClangdItem& item = m_items.at(index.row());
     QTextCursor cur = m_editor->textCursor();
@@ -957,7 +1200,8 @@ void Ide::addProblemRow(const QString& severity, const QString& message,
 
 void Ide::onDiagnostics(const QString& path,
                         const QVector<ClangdDiagnostic>& diags) {
-    if (path != m_currentFile)
+    Doc* doc = activeDoc();
+    if (!doc || path != doc->path)
         return;
     // rebuild rows coming from clangd (keep rows produced by the compiler:
     // they have an absolute file name in col 2 which never matches here —
@@ -999,6 +1243,8 @@ void Ide::jumpTo(const QString& file, int line, int col) {
         QFileInfo(path).exists())
         openFileFromPath(path);
 
+    if (!m_editor)
+        return;
     QTextBlock block = m_editor->document()->findBlockByNumber(line - 1);
     if (!block.isValid())
         return;
