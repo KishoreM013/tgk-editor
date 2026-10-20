@@ -17,6 +17,7 @@ public:
     void setCompleter(QCompleter* c);
     QCompleter* completer() const { return m_completer; }
     void setTheme(const Theme& theme);
+    void setTabWidth(int width, bool useTabs);
 
     void lineNumberAreaPaintEvent(QPaintEvent* event);
     int lineNumberAreaWidth() const;
@@ -35,10 +36,21 @@ private slots:
     void scheduleCompletion();
 
 private:
+    QString indentUnit() const;
+    void indentSelection(bool outdent);
+    void insertNewlineWithIndent();
+    bool insertPair(QChar open);
+    bool skipClosing(QChar close);
+    bool deleteBracketPair();
+    bool dedentIfOnlyWhitespace();
+    void hideCompletionPopup();
+
     QWidget* m_lineNumberArea;
     QCompleter* m_completer = nullptr;
     QTimer* m_completionTimer;
     bool m_inserting = false;
+    int m_tabWidth = 4;
+    bool m_useTabs = false;
 
     // theme colors
     QColor m_currentLineBg = QColor("#EAF1FB");

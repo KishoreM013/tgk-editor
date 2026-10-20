@@ -72,8 +72,234 @@ void CodeEditor::resizeEvent(QResizeEvent* event) {
         QRect(cr.left(), cr.top(), lineNumberAreaWidth(), cr.height()));
 }
 
-void CodeEditor::setTheme(const Theme& t) {
-    QPalette p = palette();
+void CodeEditor::setTabWidth(int width, bool useTabs) {
+    m_tabWidth = qBound(1, width, 16);
+    m_useTabs = useTabs;
+    setTabStopDistance(fontMetrics().horizontalAdvance(QLatin1Char(' ')) *
+                       m_tabWidth);
+}
+
+QString CodeEditor::indentUnit() const {
+    return m_useTabs ? QString('\t') : QString(m_tabWidth, ' ');
+}
+
+void CodeEditor::hideCompletionPopup() {
+    if (m_completer && m_completer->popup())
+        m_completer->popup()->hide();
+}
+
+// Tab / Shift+Tab: indent or outdent the selected lines (or the current one).
+void CodeEditor::indentSelection(bool outdent) {
+    QTextCursor cur = textCursor();
+    const int startBlock =
+        document()->findBlock(cur.hasSelection() ? cur.selectionStart()
+                                                 : cur.position())
+            .blockNumber();
+    int endBlock =
+        document()->findBlock(cur.hasSelection() ? cur.selectionEnd()
+                                                 : cur.position())
+            .blockNumber();
+    // A selection ending at column 0 does not include that last line.
+    if (cur.hasSelection() && endBlock > startBlock &&
+        cur.selectionEnd() ==
+            document()->findBlock(cur.selectionEnd()).position())
+        --endBlock;
+
+    const QString unit = indentUnit();
+    QTextCursor edit(document());
+    edit.beginEditBlock();
+    for (int n = startBlock; n <= endBlock; ++n) {
+        QTextBlock block = document()->findBlockByNumber(n);
+        if (!block.isValid())
+            continue;
+        QTextCursor c(block);
+        if (outdent) {
+            const QString text = block.text();
+            int remove = 0;
+            if (!text.isEmpty() && text.at(0) == '\t') {
+                remove = 1;
+            } else {
+                while (remove < m_tabWidth && remove < text.size() &&
+                       text.at(remove) == ' ')
+                    ++remove;
+            }
+            if (remove > 0) {
+                c.setPosition(block.position() + remove,
+                              QTextCursor::KeepAnchor);
+                c.removeSelectedText();
+            }
+        } else {
+            c.insertText(unit);
+        }
+    }
+    edit.endEditBlock();
+    hideCompletionPopup();
+}
+
+// Enter: keep the current indentation, add one level after { [ ( or the
+// Python ':' and expand "{ }" into three properly aligned lines.
+void CodeEditor::insertNewlineWithIndent() {
+    hideCompletionPopup();
+    QTextCursor cur = textCursor();
+    if (cur.hasSelection())
+        cur.removeSelectedText();
+
+    const QTextBlock block = cur.block();
+    const QString text = block.text();
+    const int col = cur.positionInBlock();
+
+    QString indent;
+    for (int i = 0; i < text.size(); ++i) {
+        const QChar ch = text.at(i);
+        if (ch == ' ' || ch == '\t')
+            indent += ch;
+        else
+            break;
+    }
+
+    const QString before = text.left(col).trimmed();
+    const QChar last = before.isEmpty() ? QChar() : before.at(before.size() - 1);
+    const QChar next = (col < text.size()) ? text.at(col) : QChar();
+
+    auto matching = [](QChar o, QChar c) {
+        return (o == '{' && c == '}') || (o == '[' && c == ']') ||
+               (o == '(' && c == ')');
+    };
+    const bool between = matching(last, next);
+
+    QTextCursor c = cur;
+    c.beginEditBlock();
+    if (between) {
+        // "{|}" -> opening line, indented empty line, closing line.
+        c.insertText("\n" + indent + indentUnit() + "\n" + indent);
+        c.movePosition(QTextCursor::Up);
+        c.movePosition(QTextCursor::EndOfLine);
+    } else {
+        QString newIndent = indent;
+        if (last == '{' || last == '[' || last == '(' || last == ':')
+            newIndent += indentUnit();
+        c.insertText("\n" + newIndent);
+    }
+    c.endEditBlock();
+    setTextCursor(c);
+    ensureCursorVisible();
+}
+
+// Auto-close (, [, { and quotes. Returns false to let the char be typed
+// normally (e.g. an apostrophe inside a word).
+bool CodeEditor::insertPair(QChar open) {
+    QTextCursor cur = textCursor();
+    const int col = cur.positionInBlock();
+
+    if (open == '"' || open == '\'' || open == '`') {
+        if (!cur.hasSelection() && col > 0) {
+            const QChar prev = cur.block().text().at(col - 1);
+            if (prev.isLetterOrNumber() || prev == '_')
+                return false; // it's an apostrophe, not a string
+        }
+    }
+
+    QChar close = open;
+    if (open == '(')
+        close = ')';
+    else if (open == '[')
+        close = ']';
+    else if (open == '{')
+        close = '}';
+
+    QTextCursor c = cur;
+    c.beginEditBlock();
+    if (c.hasSelection()) {
+        QString sel = c.selectedText();
+        sel.replace(QChar::ParagraphSeparator, '\n');
+        c.insertText(QString(open) + sel + QString(close));
+    } else {
+        c.insertText(QString(open) + QString(close));
+        c.movePosition(QTextCursor::Left); // cursor between the pair
+    }
+    c.endEditBlock();
+    setTextCursor(c);
+    hideCompletionPopup();
+    return true;
+}
+
+// Typing the closing char when it is already there just steps over it.
+bool CodeEditor::skipClosing(QChar close) {
+    QTextCursor cur = textCursor();
+    if (cur.hasSelection())
+        return false;
+    const QString text = cur.block().text();
+    const int col = cur.positionInBlock();
+    if (col >= text.size() || text.at(col) != close)
+        return false;
+    QTextCursor c = cur;
+    c.movePosition(QTextCursor::Right);
+    setTextCursor(c);
+    hideCompletionPopup();
+    return true;
+}
+
+// Backspace between an empty pair removes both characters.
+bool CodeEditor::deleteBracketPair() {
+    QTextCursor cur = textCursor();
+    if (cur.hasSelection())
+        return false;
+    const int pos = cur.position();
+    const QString text = toPlainText();
+    if (pos <= 0 || pos >= text.size())
+        return false;
+    const QChar before = text.at(pos - 1);
+    const QChar after = text.at(pos);
+    const bool pair = (before == '(' && after == ')') ||
+                      (before == '[' && after == ']') ||
+                      (before == '{' && after == '}') ||
+                      (before == '"' && after == '"') ||
+                      (before == '\'' && after == '\'') ||
+                      (before == '`' && after == '`');
+    if (!pair)
+        return false;
+
+    QTextCursor c = cur;
+    c.beginEditBlock();
+    c.setPosition(pos - 1);
+    c.setPosition(pos + 1, QTextCursor::KeepAnchor);
+    c.removeSelectedText();
+    c.endEditBlock();
+    setTextCursor(c);
+    hideCompletionPopup();
+    return true;
+}
+
+// Typing } ) ] on an otherwise empty, indented line first removes one level.
+bool CodeEditor::dedentIfOnlyWhitespace() {
+    QTextCursor cur = textCursor();
+    if (cur.hasSelection())
+        return false;
+    const QTextBlock block = cur.block();
+    const QString text = block.text();
+    if (!text.trimmed().isEmpty() || cur.positionInBlock() != text.size())
+        return false;
+
+    int remove = 0;
+    if (!text.isEmpty() && text.at(0) == '\t') {
+        remove = 1;
+    } else {
+        while (remove < m_tabWidth && remove < text.size() &&
+               text.at(remove) == ' ')
+            ++remove;
+    }
+    if (remove == 0)
+        return false;
+
+    QTextCursor c = cur;
+    c.setPosition(block.position());
+    c.setPosition(block.position() + remove, QTextCursor::KeepAnchor);
+    c.removeSelectedText();
+    setTextCursor(c);
+    return true;
+}
+
+void CodeEditor::setTheme(const Theme& t) {    QPalette p = palette();
     p.setColor(QPalette::Base, t.editorBg);
     p.setColor(QPalette::Text, t.editorFg);
     p.setColor(QPalette::Highlight, t.selectionBg);
@@ -165,6 +391,49 @@ void CodeEditor::keyPressEvent(QKeyEvent* e) {
             return;
         default:
             break;
+        }
+    }
+
+    const Qt::KeyboardModifiers mods = e->modifiers();
+    const bool plain =
+        !(mods & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier));
+
+    // --- indentation --------------------------------------------------
+    if (plain && (e->key() == Qt::Key_Tab || e->key() == Qt::Key_Backtab)) {
+        indentSelection(e->key() == Qt::Key_Backtab ||
+                        (mods & Qt::ShiftModifier));
+        return;
+    }
+    if (plain && (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter)) {
+        insertNewlineWithIndent();
+        return;
+    }
+    if (plain && e->key() == Qt::Key_Backspace && deleteBracketPair())
+        return;
+
+    // --- auto pairs ---------------------------------------------------
+    if (plain) {
+        const QString typed = e->text();
+        if (typed.size() == 1) {
+            const QChar ch = typed.at(0);
+            const bool quote = (ch == '"' || ch == '\'' || ch == '`');
+            const bool opening = (ch == '(' || ch == '[' || ch == '{');
+            const bool closing = (ch == ')' || ch == ']' || ch == '}');
+
+            if (quote) {
+                if (skipClosing(ch))
+                    return;
+                if (insertPair(ch))
+                    return;
+            } else if (opening) {
+                if (insertPair(ch))
+                    return;
+            } else if (closing) {
+                if (skipClosing(ch))
+                    return;
+                // typing } ) ] on an indented empty line: outdent it first
+                dedentIfOnlyWhitespace();
+            }
         }
     }
 

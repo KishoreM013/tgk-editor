@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QProcess>
 #include <QStandardPaths>
 
 namespace {
@@ -64,15 +65,26 @@ QString LanguageRegistry::outputPathFor(const QString& file) {
     return fi.absolutePath() + "/" + fi.completeBaseName() + ".bin";
 }
 
-QString LanguageRegistry::expand(const QString& tmpl, const QString& file) {
-    QFileInfo fi(file);
-    QString out = tmpl;
-    out.replace("{file}", fi.absoluteFilePath());
-    out.replace("{dir}", fi.absolutePath());
-    out.replace("{name}", fi.completeBaseName());
-    out.replace("{class}", fi.completeBaseName());
-    out.replace("{output}", outputPathFor(file));
-    return out;
+QStringList LanguageRegistry::expandArgs(const QString& tmpl,
+                                         const QString& file) {
+    if (tmpl.trimmed().isEmpty())
+        return {};
+
+    QStringList parts = QProcess::splitCommand(tmpl);
+    const QFileInfo fi(file);
+    const QString absolute = fi.absoluteFilePath();
+    const QString dir = fi.absolutePath();
+    const QString name = fi.completeBaseName();
+    const QString output = outputPathFor(file);
+
+    for (QString& part : parts) {
+        part.replace("{file}", absolute);
+        part.replace("{dir}", dir);
+        part.replace("{name}", name);
+        part.replace("{class}", name);
+        part.replace("{output}", output);
+    }
+    return parts;
 }
 
 void LanguageRegistry::load() {

@@ -31,7 +31,9 @@ public:
 
     static QString configPath();
     static QString outputPathFor(const QString& file);
-    static QString expand(const QString& tmpl, const QString& file);
+    // Splits the command template into arguments first, then substitutes the
+    // placeholders, so paths containing spaces stay single arguments.
+    static QStringList expandArgs(const QString& tmpl, const QString& file);
 
     const LanguageSpec* forFile(const QString& path) const;
     LanguageSpec* byId(const QString& id);

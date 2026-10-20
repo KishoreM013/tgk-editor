@@ -23,6 +23,8 @@ class QTabWidget;
 class QCloseEvent;
 class QStackedWidget;
 class QMenu;
+class QCheckBox;
+class QTimer;
 class WelcomePage;
 
 class Ide : public QMainWindow {
@@ -57,6 +59,7 @@ private slots:
     void updateStatusCursor();
     void showHome();
     void showEditorPage();
+    void autoSaveNow();
 
 private:
     struct Doc; // one open file / tab
@@ -83,6 +86,8 @@ private:
     void jumpTo(const QString& file, int line, int col);
     void syncDocument();
     void applyTheme(const Theme& theme);
+    void setIndent(int width, bool useTabs);
+    void setAutoSave(bool enabled);
     bool askToolchain(LanguageSpec& spec);
     void showLanguageSettings();
     void loadRecent();
@@ -98,6 +103,11 @@ private:
     Theme m_theme;
     QFont m_editorFont;
     int m_untitledCounter = 0;
+    int m_tabWidth = 4;
+    bool m_useTabs = false;
+    bool m_autoSave = false;
+    QCheckBox* m_autoSaveCheck = nullptr;
+    QTimer* m_autoSaveTimer = nullptr;
 
     // active document (shortcuts into the active Doc)
     CodeEditor* m_editor = nullptr;

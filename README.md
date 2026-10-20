@@ -20,6 +20,14 @@ powered by **clangd** (the same engine behind VS Code's C/C++ support).
   Dev-C++ Classic, Dark, Monokai, Solarized Light/Dark
 - Syntax highlighting for C/C++/Java/Python with language-aware comment toggle
   (**Ctrl+\\**)
+- **Auto-close brackets** — `(`, `[`, `{` and quotes insert their partner;
+  typing the closing char steps over it, Backspace removes empty pairs, and
+  Enter between `{}` opens a properly aligned indented line
+- **Smart indentation** — auto-indent after `{`/`(`/`:` , outdent on `}`, and
+  a configurable tab width (Edit → Indentation: 2/3/4/8 spaces, or real tabs),
+  persisted between sessions
+- **Auto-save checkbox** in the toolbar — saves changed files 1.2 s after you
+  stop typing (untitled files wait until you give them a name)
 - Output pane with an **input line** for interactive programs (stdin)
 - Problems pane: compiler/interpreter diagnostics; double-click to jump to line
 - Line numbers, current-line highlight, toolbar buttons showing their shortcuts
@@ -52,6 +60,7 @@ Requires: Qt6 (Widgets, Gui), g++, clangd.
 | F10 | Stop program |
 | Ctrl+\\ | Toggle comment (uses `//` or `#` per language) |
 | Ctrl+Space | Code completion (C/C++) |
+| Tab / Shift+Tab | Indent / outdent the selected lines |
 | Ctrl+S / Ctrl+O / Ctrl+N | Save / Open / New |
 | Ctrl+W | Close the current tab |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
@@ -78,6 +87,8 @@ Requires: Qt6 (Widgets, Gui), g++, clangd.
 Placeholders: `{file}` `{dir}` `{name}` `{class}` `{output}`.
 Set `"confirmed": false` (or delete an entry) to be asked again on next run.
 Add your own language by appending an entry with a new extension list.
+Placeholders are substituted per argument after the template is split, so
+paths containing spaces (e.g. `~/my projects/x.py`) work correctly.
 
 ## Debugging tips
 

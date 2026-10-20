@@ -29,6 +29,7 @@
 #include <QStackedWidget>
 #include <QScrollBar>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QAbstractItemView>
 #include <QStatusBar>
 #include <QStringListModel>
@@ -37,6 +38,7 @@
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QTextStream>
+#include <QTimer>
 #include <QToolBar>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -57,6 +59,15 @@ struct Ide::Doc {
 
 Ide::Ide(QWidget* parent) : QMainWindow(parent) {
     m_langs.load(); // built-ins + ~/.config/tgk/tgkeditor.json
+
+    m_tabWidth = qBound(1, QSettings().value("tabWidth", 4).toInt(), 16);
+    m_useTabs = QSettings().value("useTabs", false).toBool();
+    m_autoSave = QSettings().value("autoSave", false).toBool();
+
+    m_autoSaveTimer = new QTimer(this);
+    m_autoSaveTimer->setSingleShot(true);
+    m_autoSaveTimer->setInterval(1200);
+    connect(m_autoSaveTimer, &QTimer::timeout, this, &Ide::autoSaveNow);
 
     m_editorFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     m_editorFont.setPointSize(11);
@@ -106,8 +117,51 @@ Ide::Ide(QWidget* parent) : QMainWindow(parent) {
     statusBar()->showMessage("Ready — F9 compiles & runs, Ctrl+Space completes");
 }
 
-void Ide::applyTheme(const Theme& t) {
-    m_theme = t;
+void Ide::setAutoSave(bool enabled) {
+    m_autoSave = enabled;
+    QSettings s;
+    s.setValue("autoSave", m_autoSave);
+    s.sync();
+    if (m_autoSaveCheck && m_autoSaveCheck->isChecked() != enabled) {
+        QSignalBlocker blocker(m_autoSaveCheck);
+        m_autoSaveCheck->setChecked(enabled);
+    }
+    if (enabled) {
+        m_autoSaveTimer->start(); // catch up on anything already modified
+        statusBar()->showMessage("Auto-save on", 2000);
+    } else {
+        m_autoSaveTimer->stop();
+        statusBar()->showMessage("Auto-save off", 2000);
+    }
+}
+
+void Ide::autoSaveNow() {
+    if (!m_autoSave)
+        return;
+    for (Doc* doc : m_docList) {
+        if (doc->path.isEmpty() || !doc->editor->document()->isModified())
+            continue; // unsaved untitled files need a name first
+        saveDoc(doc);
+    }
+}
+
+void Ide::setIndent(int width, bool useTabs) {    m_tabWidth = qBound(1, width, 16);
+    m_useTabs = useTabs;
+    for (Doc* doc : m_docList)
+        doc->editor->setTabWidth(m_tabWidth, m_useTabs);
+
+    QSettings s;
+    s.setValue("tabWidth", m_tabWidth);
+    s.setValue("useTabs", m_useTabs);
+    s.sync();
+
+    statusBar()->showMessage(
+        m_useTabs ? QString("Indentation: tab characters")
+                  : QString("Indentation: %1 spaces").arg(m_tabWidth),
+        2500);
+}
+
+void Ide::applyTheme(const Theme& t) {    m_theme = t;
     for (Doc* d : m_docList) {
         d->editor->setTheme(t);
         d->highlighter->setTheme(t);
@@ -236,6 +290,23 @@ void Ide::setupActions() {
     editMenu->addAction("&Toggle Comment", this, &Ide::toggleComment,
                         QKeySequence(Qt::CTRL | Qt::Key_Backslash));
 
+    QMenu* indentMenu = editMenu->addMenu("&Indentation");
+    QActionGroup* indentGroup = new QActionGroup(this);
+    for (int w : {2, 3, 4, 8}) {
+        QAction* a = indentMenu->addAction(QString("%1 spaces").arg(w));
+        a->setCheckable(true);
+        a->setActionGroup(indentGroup);
+        a->setChecked(!m_useTabs && w == m_tabWidth);
+        connect(a, &QAction::triggered, this,
+                [this, w] { setIndent(w, false); });
+    }
+    indentMenu->addSeparator();
+    QAction* tabChars = indentMenu->addAction("Use &tab characters");
+    tabChars->setCheckable(true);
+    tabChars->setChecked(m_useTabs);
+    connect(tabChars, &QAction::toggled, this,
+            [this](bool on) { setIndent(m_tabWidth, on); });
+
     // Build menu
     QMenu* buildMenu = menuBar()->addMenu("&Build");
     buildMenu->addAction("&Compile (F8)", this, &Ide::compileOnly,
@@ -285,6 +356,13 @@ void Ide::setupActions() {
     tb->addAction("Open\n(Ctrl+O)", this, &Ide::openFile);
     tb->addAction("Save\n(Ctrl+S)", this, &Ide::saveFile);
     tb->addAction("Home\n(Ctrl+H)", this, &Ide::showHome);
+
+    m_autoSaveCheck = new QCheckBox("Auto-save", tb);
+    m_autoSaveCheck->setChecked(m_autoSave);
+    m_autoSaveCheck->setToolTip(
+        "Automatically save files 1.2 s after you stop typing");
+    connect(m_autoSaveCheck, &QCheckBox::toggled, this, &Ide::setAutoSave);
+    tb->addWidget(m_autoSaveCheck);
     tb->addSeparator();
     tb->addAction("Comment\n(Ctrl+\\)", this, &Ide::toggleComment);
     tb->addSeparator();
@@ -311,6 +389,25 @@ void Ide::setupActions() {
         m_docTabs->setCurrentIndex((m_docTabs->currentIndex() - 1 + n) % n);
     });
 }
+
+namespace {
+// Human-readable form for the console, e.g. g++ "/a b/x.cpp" -o "/a b/x.bin".
+QString displayCommand(const QStringList& parts) {
+    QStringList out;
+    out.reserve(parts.size());
+    for (const QString& p : parts) {
+        if (p.isEmpty() || p.contains(' ') || p.contains('\t') ||
+            p.contains('"')) {
+            QString quoted = p;
+            quoted.replace('"', "\\\"");
+            out << '"' + quoted + '"';
+        } else {
+            out << p;
+        }
+    }
+    return out.join(' ');
+}
+} // namespace
 
 static CppHighlighter::Lang languageForPath(const LanguageRegistry& langs,
                                             const QString& path,
@@ -351,6 +448,7 @@ Ide::Doc* Ide::createDoc(const QString& path, const QString& content) {
     doc->editor = new CodeEditor(m_docTabs);
     doc->highlighter = new CppHighlighter(doc->editor->document());
     doc->editor->setFont(m_editorFont);
+    doc->editor->setTabWidth(m_tabWidth, m_useTabs);
     doc->editor->setCompleter(m_completer);
     doc->editor->setPlainText(content);
     doc->editor->document()->setModified(false);
@@ -368,10 +466,12 @@ Ide::Doc* Ide::createDoc(const QString& path, const QString& content) {
     connect(doc->editor, &QPlainTextEdit::cursorPositionChanged, this,
             &Ide::updateStatusCursor);
     connect(doc->editor->document(), &QTextDocument::modificationChanged, this,
-            [this, doc](bool) {
+            [this, doc](bool modified) {
                 updateTabTitle(doc);
                 if (doc->editor == m_editor)
                     updateWindowTitle();
+                if (modified && m_autoSave && !doc->path.isEmpty())
+                    m_autoSaveTimer->start();
             });
 
     updateTabTitle(doc);
@@ -750,10 +850,13 @@ void Ide::startBuild(bool runAfter) {
         return;
     }
 
-    QString cmd =
-        LanguageRegistry::expand(m_activeSpec.compile, m_currentFile);
-    appendConsole("$ " + cmd + "\n");
-    QStringList parts = QProcess::splitCommand(cmd);
+    QStringList parts =
+        LanguageRegistry::expandArgs(m_activeSpec.compile, m_currentFile);
+    if (parts.isEmpty()) {
+        appendConsole("error: empty compile command\n");
+        return;
+    }
+    appendConsole("$ " + displayCommand(parts) + "\n");
     QString prog = parts.takeFirst();
     m_buildProc->setWorkingDirectory(fi.absolutePath());
     m_buildProc->start(prog, parts);
@@ -896,14 +999,14 @@ void Ide::runProgram() {
     QFileInfo fi(m_buildFile);
     m_console->appendPlainText("\n--- running " + fi.fileName() + " ---\n");
 
-    QString cmd = LanguageRegistry::expand(m_activeSpec.run, m_buildFile);
-    if (cmd.trimmed().isEmpty()) {
+    QStringList parts =
+        LanguageRegistry::expandArgs(m_activeSpec.run, m_buildFile);
+    if (parts.isEmpty()) {
         appendConsole("[No run command configured for " +
                       m_activeSpec.displayName + "]\n");
         return;
     }
-    appendConsole("$ " + cmd + "\n");
-    QStringList parts = QProcess::splitCommand(cmd);
+    appendConsole("$ " + displayCommand(parts) + "\n");
     QString prog = parts.takeFirst();
     m_runProc->setWorkingDirectory(fi.absolutePath());
     m_runProc->start(prog, parts);
