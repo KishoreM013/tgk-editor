@@ -17,6 +17,7 @@ struct DiagnosticMark {
     int endLine = -1;
     int endCol = -1;
     int severity = 1; // 1 error, 2 warning, 3+ note
+    bool unnecessary = false; // LSP hint (unused include etc.)
     QString message;
 };
 

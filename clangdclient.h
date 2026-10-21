@@ -23,6 +23,7 @@ struct ClangdDiagnostic {
     int severity = 1; // 1=error 2=warning 3=note
     int line = 0, col = 0;
     int endLine = 0, endCol = 0; // LSP range end (0-based)
+    bool unnecessary = false;    // LSP DiagnosticTag.Unnecessary
 };
 
 // Minimal LSP client that talks to the clangd language server over stdio.
@@ -75,5 +76,7 @@ private:
     };
     QVector<Pending> m_pending;
     QHash<QString, int> m_versions;
+    QHash<QString, int> m_diagVersions; // last published diagnostics version
+    QHash<QString, QString> m_lastText; // avoid duplicate didChange messages
     QVector<std::function<void()>> m_queue;
 };

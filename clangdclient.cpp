@@ -64,6 +64,9 @@ bool ClangdClient::start(const QString& rootDir,
                     m_initialized = false;
                     m_pending.clear();
                     m_queue.clear();
+                    m_versions.clear();
+                    m_diagVersions.clear();
+                    m_lastText.clear();
                     emit serverDied();
                 });
     }
@@ -124,6 +127,8 @@ bool ClangdClient::isRunning() const {
 }
 
 void ClangdClient::openDocument(const QString& path, const QString& text) {
+    m_lastText[path] = text;
+    m_diagVersions.remove(path); // didOpen starts document versions at 1 again
     enqueue([this, path, text] {
         QJsonObject td;
         td["uri"] = QUrl::fromLocalFile(path).toString();
@@ -138,20 +143,38 @@ void ClangdClient::openDocument(const QString& path, const QString& text) {
 }
 
 void ClangdClient::changeDocument(const QString& path, const QString& text) {
+    // The completion request also syncs the active document. It usually has
+    // the same text as the debounced change, so skip the duplicate: two
+    // didChange notifications in the same millisecond can make clangd drop
+    // the update and leave old squiggles on screen.
+    if (m_lastText.value(path) == text)
+        return;
+    m_lastText[path] = text;
     enqueue([this, path, text] {
         int ver = m_versions.value(path, 0) + 1;
         m_versions[path] = ver;
         QJsonObject td;
         td["uri"] = QUrl::fromLocalFile(path).toString();
         td["version"] = ver;
-        td["text"] = text;
+
+        // LSP puts the new text in "contentChanges", not in "textDocument".
+        // clangd silently ignores a didChange without it, so diagnostics used
+        // to stay frozen at whatever the file looked like when it was opened.
+        QJsonObject change;
+        change["text"] = text; // full-document sync
+        QJsonArray changes;
+        changes.append(change);
+
         QJsonObject params;
         params["textDocument"] = td;
+        params["contentChanges"] = changes;
         sendNotification("textDocument/didChange", params);
     });
 }
 
 void ClangdClient::closeDocument(const QString& path) {
+    m_lastText.remove(path);
+    m_diagVersions.remove(path);
     enqueue([this, path] {
         QJsonObject td;
         td["uri"] = QUrl::fromLocalFile(path).toString();
@@ -327,12 +350,30 @@ void ClangdClient::handlePayload(const QByteArray& json) {
     if (method == "textDocument/publishDiagnostics") {
         QJsonObject params = obj["params"].toObject();
         QString path = uriToPath(params["uri"].toString());
+
+        // clangd tags diagnostics with the document version. It can publish
+        // late results for an older version after a newer one; applying those
+        // would put squiggles from deleted code back on screen.
+        const int version = params.value("version").toInt(-1);
+        if (version >= 0) {
+            const auto seen = m_diagVersions.constFind(path);
+            if (seen != m_diagVersions.constEnd() && version < seen.value())
+                return;
+            m_diagVersions[path] = version;
+        }
+
         QVector<ClangdDiagnostic> diags;
         for (const QJsonValue& v : params["diagnostics"].toArray()) {
             QJsonObject o = v.toObject();
             ClangdDiagnostic d;
             d.message = o["message"].toString();
             d.severity = o["severity"].toInt(1);
+            // DiagnosticTag.Unnecessary = 1. clangd uses it for hints such as
+            // an include that is not used yet; editors normally fade those
+            // instead of drawing a warning squiggle.
+            for (const QJsonValue& tag : o["tags"].toArray())
+                if (tag.toInt() == 1)
+                    d.unnecessary = true;
             QJsonObject range = o["range"].toObject();
             QJsonObject s = range["start"].toObject();
             QJsonObject e = range["end"].toObject();

@@ -376,6 +376,8 @@ void CodeEditor::setBuildDiagnostics(const QVector<DiagnosticMark>& diags) {
 void CodeEditor::rebuildDiagnosticIndex() {
     m_diagLineSeverity.clear();
     for (const DiagnosticMark& d : allDiagnostics()) {
+        if (d.unnecessary)
+            continue; // hints do not color the gutter
         auto it = m_diagLineSeverity.find(d.line);
         if (it == m_diagLineSeverity.end() || d.severity < it.value())
             m_diagLineSeverity.insert(d.line, d.severity);
@@ -412,6 +414,11 @@ void CodeEditor::updateExtraSelections() {
     QHash<QString, int> seen;
     QVector<DiagnosticMark> marks;
     for (const DiagnosticMark& d : allDiagnostics()) {
+        // Unnecessary/obsolete code is faded by VS Code, not underlined. We
+        // keep it in the Problems pane and tooltip, but avoid a scary yellow
+        // squiggle on an include the user has simply not used yet.
+        if (d.unnecessary)
+            continue;
         const QString key = QString("%1:%2:%3:%4")
                                 .arg(d.line)
                                 .arg(d.col)
@@ -507,10 +514,11 @@ void CodeEditor::mouseMoveEvent(QMouseEvent* e) {
     const int shown = qMin(unique.size(), 8);
     for (int i = 0; i < shown; ++i) {
         const DiagnosticMark& d = unique.at(i);
+        const QString label = d.unnecessary ? "Hint" : severityLabel(d.severity);
+        const QColor color =
+            d.unnecessary ? m_lnFg : diagnosticColor(d.severity);
         html += QString("<span style='color:%1'><b>%2</b></span>: %3<br>")
-                    .arg(diagnosticColor(d.severity).name(),
-                         severityLabel(d.severity),
-                         d.message.toHtmlEscaped());
+                    .arg(color.name(), label, d.message.toHtmlEscaped());
     }
     if (unique.size() > shown)
         html += QString("… and %1 more in the Problems pane")

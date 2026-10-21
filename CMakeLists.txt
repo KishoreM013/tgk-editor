@@ -28,9 +28,22 @@ add_executable(clangd_test
 )
 target_link_libraries(clangd_test PRIVATE Qt6::Core)
 
+# Headless test of live diagnostics (open/break/fix)
+add_executable(diagnostics_test
+    test_diagnostics.cpp
+    clangdclient.h clangdclient.cpp
+)
+target_link_libraries(diagnostics_test PRIVATE Qt6::Core)
+
 # Headless test of multi-tab handling
 add_executable(tabs_test tabs_test.cpp ${APP_SOURCES})
 target_link_libraries(tabs_test PRIVATE Qt6::Widgets)
+
+# End-to-end test: clangd squiggles follow edits made in the editor
+add_executable(ide_diagnostics_test
+    test_ide_diagnostics.cpp ${APP_SOURCES}
+)
+target_link_libraries(ide_diagnostics_test PRIVATE Qt6::Widgets)
 
 # Headless test of the project tree (pins / "only pinned" filter)
 add_executable(project_test

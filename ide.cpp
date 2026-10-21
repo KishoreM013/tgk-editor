@@ -1776,6 +1776,7 @@ void Ide::onDiagnostics(const QString& path,
         m.endLine = d.endLine;
         m.endCol = d.endCol;
         m.severity = d.severity == 1 ? 1 : d.severity == 2 ? 2 : 3;
+        m.unnecessary = d.unnecessary;
         const QTextBlock line =
             target->editor->document()->findBlockByNumber(d.line);
         m.message = augmentDiagnostic(
@@ -1795,9 +1796,10 @@ void Ide::onDiagnostics(const QString& path,
     int errors = 0;
     for (int i = 0; i < diags.size(); ++i) {
         const ClangdDiagnostic& d = diags.at(i);
-        QString sev = d.severity == 1   ? "error"
-                      : d.severity == 2 ? "warning"
-                                        : "note";
+        QString sev = d.unnecessary          ? "hint"
+                      : d.severity == 1      ? "error"
+                      : d.severity == 2      ? "warning"
+                                             : "note";
         if (d.severity == 1)
             ++errors;
         addProblemRow(sev, marks.at(i).message, QFileInfo(path).fileName(),

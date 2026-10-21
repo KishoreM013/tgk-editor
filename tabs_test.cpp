@@ -163,6 +163,16 @@ int main(int argc, char** argv) {
 
     editor->setBuildDiagnostics({});
     check(countWaves(editor) == 0, "all diagnostic marks can be cleared");
+
+    DiagnosticMark hint = err;
+    hint.severity = 2;
+    hint.unnecessary = true;
+    hint.message = "included header is not used directly";
+    editor->setDiagnostics({hint});
+    check(countWaves(editor) == 0,
+          "unnecessary hints do not draw warning squiggles");
+    editor->setDiagnostics({});
+
     editor->document()->setModified(true);
     check(tabs->tabText(0).contains("*"), "modified tab shows a marker");
     editor->document()->setModified(false);
