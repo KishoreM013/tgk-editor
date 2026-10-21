@@ -117,29 +117,28 @@ ProjectPanel::ProjectPanel(QWidget* parent) : QWidget(parent) {
     refreshBtn->setToolTip("Refresh the tree");
     refreshBtn->setFixedWidth(30);
 
+    auto* pinBtn = new QPushButton("Pin", this);
+    pinBtn->setToolTip("Tick all selected files (Ctrl+click to select several)");
+    pinBtn->setFixedWidth(38);
+
     auto* rootRow = new QHBoxLayout();
     rootRow->setContentsMargins(0, 0, 0, 0);
+    rootRow->setSpacing(4);
     m_rootLabel = new QLabel("No project open", this);
     m_rootLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
     QFont bold = m_rootLabel->font();
     bold.setBold(true);
     m_rootLabel->setFont(bold);
     rootRow->addWidget(m_rootLabel, 1);
-    rootRow->addWidget(refreshBtn);
-    outer->addLayout(rootRow);
 
-    auto* filterRow = new QHBoxLayout();
-    m_onlyPinned = new QCheckBox("Only pinned files", this);
+    m_onlyPinned = new QCheckBox("Pinned only", this);
     m_onlyPinned->setToolTip(
         "Show only files whose check box is ticked.\n"
         "Tick files in the tree first (Ctrl+click to select several).");
-    auto* pinBtn = new QPushButton("Pin", this);
-    pinBtn->setToolTip("Tick all selected files (Ctrl+click to select several)");
-    pinBtn->setFixedWidth(44);
-    filterRow->addWidget(m_onlyPinned);
-    filterRow->addStretch(1);
-    filterRow->addWidget(pinBtn);
-    outer->addLayout(filterRow);
+    rootRow->addWidget(m_onlyPinned);
+    rootRow->addWidget(pinBtn);
+    rootRow->addWidget(refreshBtn);
+    outer->addLayout(rootRow);
 
     m_model = new QFileSystemModel(this);
     m_model->setReadOnly(true);
