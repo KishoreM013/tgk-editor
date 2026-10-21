@@ -59,6 +59,7 @@ struct Ide::Doc {
     QString path;     // empty = never saved
     QString untitled; // display name while unsaved
     bool clangdOpen = false;
+    bool pinned = false;
 
     QString displayName() const {
         return path.isEmpty() ? untitled : QFileInfo(path).fileName();
@@ -113,6 +114,15 @@ Ide::Ide(QWidget* parent) : QMainWindow(parent) {
     connect(m_runProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this, &Ide::onRunFinished);
 
+    m_terminalProc = new QProcess(this);
+    m_terminalProc->setProcessChannelMode(QProcess::MergedChannels);
+    connect(m_terminalProc, &QProcess::readyReadStandardOutput, this, [this] {
+        m_terminalOutput->moveCursor(QTextCursor::End);
+        m_terminalOutput->insertPlainText(
+            QString::fromUtf8(m_terminalProc->readAllStandardOutput()));
+        m_terminalOutput->moveCursor(QTextCursor::End);
+    });
+
     setupUi();
     setupActions();
 
@@ -128,7 +138,7 @@ Ide::Ide(QWidget* parent) : QMainWindow(parent) {
     m_project->setRoot(projectRoot);
 
     resize(1200, 800);
-    setWindowTitle("tgk editor");
+    setWindowTitle("Home");
     statusBar()->showMessage("Ready — F9 compiles & runs, Ctrl+Space completes");
 }
 
@@ -183,15 +193,15 @@ static QString zedChromeStyle(const Theme& t) {
     const QString thumb = dark ? "#4E5561" : "#C3C3C8";
     QString css = QStringLiteral(R"CSS(
 QMainWindow, QDialog { background: %WIN%; }
-QMenuBar { background: %WIN%; color: %TEXT%; padding: 2px 6px; }
-QMenuBar::item { background: transparent; padding: 4px 8px; border-radius: 4px; }
+QMenuBar { background: %PANEL%; color: %MUTED%; padding: 1px 6px; border-bottom: 1px solid %BORDER%; }
+QMenuBar::item { background: transparent; padding: 3px 8px; border-radius: 4px; }
 QMenuBar::item:selected { background: %HOVER%; }
 QMenu { background: %PANEL%; color: %TEXT%; border: 1px solid %BORDER%; padding: 4px; }
 QMenu::item { padding: 5px 26px 5px 18px; border-radius: 4px; }
 QMenu::item:selected { background: %SELECTED%; color: %TEXT%; }
 QMenu::separator { height: 1px; background: %BORDER%; margin: 4px 8px; }
-QToolBar { background: %PANEL%; border: none; border-bottom: 1px solid %BORDER%; spacing: 3px; padding: 3px 6px; }
-QToolButton { background: transparent; color: %TEXT%; border: none; border-radius: 4px; padding: 4px 8px; }
+QToolBar#zedToolbar { background: %PANEL%; border: none; border-bottom: 1px solid %BORDER%; spacing: 2px; padding: 3px 7px; }
+QToolBar#zedToolbar QToolButton { background: transparent; color: %TEXT%; border: none; border-radius: 4px; padding: 4px 7px; }
 QToolButton:hover { background: %HOVER%; }
 QToolButton:pressed { background: %SELECTED%; }
 QToolBar QLabel, QToolBar QCheckBox { color: %TEXT%; }
@@ -200,11 +210,12 @@ QStatusBar::item { border: none; }
 QStatusBar QLabel { color: %MUTED%; padding: 0 6px; }
 QTabWidget::pane { border: none; }
 QTabBar { background: %PANEL%; }
-QTabBar::tab { background: %PANEL%; color: %MUTED%; border: none; padding: 6px 12px; margin-right: 1px; }
+QTabBar::tab { background: %PANEL%; color: %MUTED%; border: none; padding: 7px 12px; margin-right: 1px; }
 QTabBar::tab:selected { background: %EDITOR%; color: %TEXT%; }
 QTabBar::tab:hover:!selected { background: %HOVER%; }
-QDockWidget { color: %TEXT%; }
-QDockWidget::title { background: %PANEL%; padding: 4px 8px; }
+QDockWidget { color: %TEXT%; border: none; }
+QDockWidget::title { background: %PANEL%; padding: 7px 10px; border-bottom: 1px solid %BORDER%; }
+QDockWidget::close-button, QDockWidget::float-button { background: transparent; border: none; }
 QSplitter::handle { background: %BORDER%; }
 QHeaderView::section { background: %PANEL%; color: %MUTED%; border: none; border-bottom: 1px solid %BORDER%; padding: 4px 6px; }
 QTableWidget { border: none; gridline-color: %BORDER%; }
@@ -330,6 +341,27 @@ void Ide::setupUi() {
             &Ide::onCellDoubleClicked);
     tabs->addTab(m_problems, "Problems");
 
+    auto* terminalTab = new QWidget(tabs);
+    auto* terminalLayout = new QVBoxLayout(terminalTab);
+    terminalLayout->setContentsMargins(0, 0, 0, 0);
+    m_terminalOutput = new QPlainTextEdit(terminalTab);
+    m_terminalOutput->setReadOnly(true);
+    m_terminalOutput->setFont(mono);
+    terminalLayout->addWidget(m_terminalOutput);
+    m_terminalInput = new QLineEdit(terminalTab);
+    m_terminalInput->setPlaceholderText("Terminal command…");
+    connect(m_terminalInput, &QLineEdit::returnPressed, this, [this] {
+        const QString command = m_terminalInput->text();
+        if (command.isEmpty())
+            return;
+        if (m_terminalProc->state() == QProcess::NotRunning)
+            m_terminalProc->start("/bin/bash", {"-i"});
+        m_terminalProc->write(command.toUtf8() + "\n");
+        m_terminalInput->clear();
+    });
+    terminalLayout->addWidget(m_terminalInput);
+    tabs->addTab(terminalTab, "Terminal");
+
     bottomLayout->addWidget(tabs);
 
     m_docTabs = new QTabWidget(splitter);
@@ -339,6 +371,21 @@ void Ide::setupUi() {
     m_docTabs->setElideMode(Qt::ElideRight);
     connect(m_docTabs, &QTabWidget::tabCloseRequested, this, &Ide::closeTab);
     connect(m_docTabs, &QTabWidget::currentChanged, this, &Ide::onTabChanged);
+    m_docTabs->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_docTabs, &QTabWidget::customContextMenuRequested, this,
+            [this](const QPoint& pos) {
+                const int index = m_docTabs->tabBar()->tabAt(pos);
+                if (index < 0)
+                    return;
+                auto* doc = docAt(index);
+                QMenu menu(this);
+                menu.addAction(doc && doc->pinned ? "Unpin Tab" : "Pin Tab",
+                               this, [this, index] { toggleTabPinned(index); });
+                menu.addSeparator();
+                menu.addAction("Close Tab", this,
+                               [this, index] { closeTab(index); });
+                menu.exec(m_docTabs->tabBar()->mapToGlobal(pos));
+            });
 
     splitter->addWidget(m_docTabs);
     splitter->addWidget(bottom);
@@ -349,6 +396,8 @@ void Ide::setupUi() {
     m_welcome = new WelcomePage(this);
     connect(m_welcome, &WelcomePage::newFileRequested, this, &Ide::newFile);
     connect(m_welcome, &WelcomePage::openFileRequested, this, &Ide::openFile);
+    connect(m_welcome, &WelcomePage::openProjectRequested, this,
+            [this] { m_project->openFolderDialog(); });
     connect(m_welcome, &WelcomePage::fileActivated, this,
             &Ide::openFileFromPath);
     connect(m_welcome, &WelcomePage::backToEditorRequested, this,
@@ -360,7 +409,7 @@ void Ide::setupUi() {
     setCentralWidget(m_stack);
 
     // Project sidebar: folder tree with per-file pins.
-    m_projectDock = new QDockWidget("Project", this);
+    m_projectDock = new QDockWidget("Explorer", this);
     m_projectDock->setObjectName("projectDock");
     m_projectDock->setAllowedAreas(Qt::LeftDockWidgetArea |
                                    Qt::RightDockWidgetArea);
@@ -391,9 +440,11 @@ void Ide::setupActions() {
     QMenu* fileMenu = menuBar()->addMenu("&File");
     fileMenu->addAction("&New", this, &Ide::newFile, QKeySequence::New);
     fileMenu->addAction("&Open…", this, &Ide::openFile, QKeySequence::Open);
-    fileMenu->addAction("Open F&older…", this,
+    fileMenu->addAction("Open &Project…", this,
                         [this] { m_project->openFolderDialog(); },
                         QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
+    fileMenu->addAction("Open &Terminal", this, &Ide::showTerminal,
+                        QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_T));
     m_recentMenu = fileMenu->addMenu("Recent &Files");
     fileMenu->addSeparator();
     fileMenu->addAction("&Save", this, &Ide::saveFile, QKeySequence::Save);
@@ -479,15 +530,12 @@ void Ide::setupActions() {
             "IntelliSense powered by clangd.");
     });
 
-    // Toolbar — each button shows its keybinding underneath
+    // Compact Zed-style command bar. File/project actions already have menu
+    // entries and single-key shortcuts, so the bar only keeps the run controls.
     QToolBar* tb = addToolBar("Main");
+    tb->setObjectName("zedToolbar");
     tb->setMovable(false);
-    tb->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
-
-    tb->addAction("New\n(Ctrl+N)", this, &Ide::newFile);
-    tb->addAction("Open\n(Ctrl+O)", this, &Ide::openFile);
-    tb->addAction("Save\n(Ctrl+S)", this, &Ide::saveFile);
-    tb->addAction("Home\n(Ctrl+H)", this, &Ide::showHome);
+    tb->setToolButtonStyle(Qt::ToolButtonTextOnly);
 
     m_autoSaveCheck = new QCheckBox("Auto-save", tb);
     m_autoSaveCheck->setChecked(m_autoSave);
@@ -495,12 +543,15 @@ void Ide::setupActions() {
         "Automatically save files 1.2 s after you stop typing");
     connect(m_autoSaveCheck, &QCheckBox::toggled, this, &Ide::setAutoSave);
     tb->addWidget(m_autoSaveCheck);
-    tb->addSeparator();
-    tb->addAction("Comment\n(Ctrl+\\)", this, &Ide::toggleComment);
-    tb->addSeparator();
-    tb->addAction("Compile\n(F8)", this, &Ide::compileOnly);
-    tb->addAction("▶ Run\n(F9)", this, &Ide::compileAndRun);
-    tb->addAction("■ Stop\n(F10)", this, &Ide::stopProgram);
+
+    QAction* commentAction = tb->addAction("Comment", this, &Ide::toggleComment);
+    commentAction->setToolTip("Toggle comment (Ctrl+\\)");
+    QAction* buildAction = tb->addAction("Build", this, &Ide::compileOnly);
+    buildAction->setToolTip("Compile only (F8)");
+    QAction* runAction = tb->addAction("Run", this, &Ide::compileAndRun);
+    runAction->setToolTip("Compile & run (F9)");
+    QAction* stopAction = tb->addAction("Stop", this, &Ide::stopProgram);
+    stopAction->setToolTip("Stop running program (F10)");
 
     // Tab switching: Ctrl+Tab / Ctrl+Shift+Tab
     auto* nextTab = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Tab), this);
@@ -660,16 +711,51 @@ void Ide::updateTabTitle(Doc* doc) {
     if (idx < 0)
         return;
     const bool dirty = doc->editor->document()->isModified();
-    m_docTabs->setTabText(idx, doc->displayName() + (dirty ? " *" : ""));
+    m_docTabs->setTabText(
+        idx, (doc->pinned ? "[pin] " : "") + doc->displayName() +
+                 (dirty ? " *" : ""));
+}
+
+void Ide::toggleTabPinned(int index) {
+    Doc* doc = docAt(index);
+    if (!doc)
+        return;
+    doc->pinned = !doc->pinned;
+    updateTabTitle(doc);
+    m_docTabs->setTabToolTip(index,
+                             (doc->pinned ? "Pinned: " : "") +
+                                 (doc->path.isEmpty() ? doc->untitled
+                                                      : doc->path));
+}
+
+void Ide::showTerminal() {
+    if (!m_stack || !m_terminalOutput)
+        return;
+    m_stack->setCurrentIndex(1);
+    auto* bottomTabs = m_terminalOutput->parentWidget()->parentWidget();
+    auto* tabs = qobject_cast<QTabWidget*>(bottomTabs);
+    if (tabs)
+        tabs->setCurrentIndex(2);
+    if (m_terminalProc->state() == QProcess::NotRunning) {
+        const QString dir = m_project->root().isEmpty()
+                                 ? QDir::homePath()
+                                 : m_project->root();
+        m_terminalProc->setWorkingDirectory(dir);
+        m_terminalProc->start("/bin/bash", {"-i"});
+        if (!m_terminalProc->waitForStarted(1000))
+            m_terminalOutput->appendPlainText(
+                "error: could not start /bin/bash\n");
+    }
+    m_terminalInput->setFocus();
 }
 
 void Ide::updateWindowTitle() {
     Doc* doc = activeDoc();
     if (!doc) {
-        setWindowTitle("tgk editor");
+        setWindowTitle("Home");
         return;
     }
-    setWindowTitle(doc->displayName() + "[*] — tgk editor");
+    setWindowTitle(doc->displayName() + "[*]");
     setWindowModified(doc->editor->document()->isModified());
 }
 
@@ -822,7 +908,7 @@ void Ide::showHome() {
     if (m_welcome)
         m_welcome->setBackVisible(!m_docList.isEmpty());
     m_stack->setCurrentIndex(0);
-    setWindowTitle("tgk editor");
+    setWindowTitle("Home");
     statusBar()->showMessage(
         "Home — double-click a recent file to reopen it", 3000);
 }
@@ -1648,6 +1734,3 @@ void Ide::jumpTo(const QString& file, int line, int col) {
     m_editor->setTextCursor(cur);
     m_editor->centerCursor();
 }
-
-
-

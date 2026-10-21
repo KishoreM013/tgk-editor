@@ -110,25 +110,23 @@ bool ProjectProxy::filterAcceptsRow(int row, const QModelIndex& parent) const {
 
 ProjectPanel::ProjectPanel(QWidget* parent) : QWidget(parent) {
     auto* outer = new QVBoxLayout(this);
-    outer->setContentsMargins(4, 4, 4, 4);
-    outer->setSpacing(4);
+    outer->setContentsMargins(8, 8, 8, 8);
+    outer->setSpacing(6);
 
-    auto* top = new QHBoxLayout();
-    auto* openBtn = new QPushButton("Open Folder…", this);
-    openBtn->setToolTip("Choose a folder to show in the tree (Ctrl+Shift+O)");
     auto* refreshBtn = new QPushButton("⟳", this);
     refreshBtn->setToolTip("Refresh the tree");
     refreshBtn->setFixedWidth(30);
-    top->addWidget(openBtn, 1);
-    top->addWidget(refreshBtn);
-    outer->addLayout(top);
 
-    m_rootLabel = new QLabel("No folder open", this);
+    auto* rootRow = new QHBoxLayout();
+    rootRow->setContentsMargins(0, 0, 0, 0);
+    m_rootLabel = new QLabel("No project open", this);
     m_rootLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
     QFont bold = m_rootLabel->font();
     bold.setBold(true);
     m_rootLabel->setFont(bold);
-    outer->addWidget(m_rootLabel);
+    rootRow->addWidget(m_rootLabel, 1);
+    rootRow->addWidget(refreshBtn);
+    outer->addLayout(rootRow);
 
     auto* filterRow = new QHBoxLayout();
     m_onlyPinned = new QCheckBox("Only pinned files", this);
@@ -164,8 +162,6 @@ ProjectPanel::ProjectPanel(QWidget* parent) : QWidget(parent) {
     m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
     outer->addWidget(m_tree, 1);
 
-    connect(openBtn, &QPushButton::clicked, this,
-            &ProjectPanel::openFolderDialog);
     connect(refreshBtn, &QPushButton::clicked, this, &ProjectPanel::refresh);
     connect(pinBtn, &QPushButton::clicked, this,
             [this] { pinSelection(true); });

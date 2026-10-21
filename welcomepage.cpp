@@ -1,7 +1,6 @@
 #include "welcomepage.h"
 
 #include <QFileInfo>
-#include <QFont>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
@@ -10,61 +9,64 @@
 
 WelcomePage::WelcomePage(QWidget* parent) : QWidget(parent) {
     auto* outer = new QVBoxLayout(this);
-    outer->setContentsMargins(60, 40, 60, 30);
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->setSpacing(0);
 
-    outer->addStretch(1);
-
-    m_title = new QLabel("tgk editor", this);
-    QFont tf = m_title->font();
-    tf.setPointSize(36);
-    tf.setBold(true);
-    m_title->setFont(tf);
-    m_title->setAlignment(Qt::AlignCenter);
-    outer->addWidget(m_title);
+    auto* content = new QWidget(this);
+    auto* contentLayout = new QVBoxLayout(content);
+    contentLayout->setContentsMargins(28, 20, 28, 20);
+    contentLayout->setSpacing(10);
 
     m_subtitle = new QLabel(
-        "Multi-language IDE — C, C++, Java, Python and more", this);
+        "Choose one of the options below\nto start working", content);
+    m_subtitle->setObjectName("welcomeMuted");
     m_subtitle->setAlignment(Qt::AlignCenter);
-    outer->addWidget(m_subtitle);
-    outer->addSpacing(22);
+    contentLayout->addWidget(m_subtitle);
+    contentLayout->addSpacing(10);
 
-    auto* buttons = new QHBoxLayout();
-    buttons->addStretch(1);
-    auto* newBtn = new QPushButton("＋  New File   (Ctrl+N)", this);
-    auto* openBtn = new QPushButton("📂  Open File…   (Ctrl+O)", this);
-    newBtn->setMinimumHeight(38);
-    openBtn->setMinimumHeight(38);
-    connect(newBtn, &QPushButton::clicked, this,
-            &WelcomePage::newFileRequested);
-    connect(openBtn, &QPushButton::clicked, this,
+    auto* actions = new QHBoxLayout();
+    actions->setSpacing(8);
+    auto* openProject = new QPushButton("Open Project", content);
+    openProject->setObjectName("welcomePrimary");
+    openProject->setMinimumHeight(34);
+    openProject->setToolTip("Open a project folder (Ctrl+Shift+O)");
+    connect(openProject, &QPushButton::clicked, this,
+            &WelcomePage::openProjectRequested);
+    actions->addWidget(openProject);
+
+    auto* openFile = new QPushButton("Open File", content);
+    openFile->setMinimumHeight(34);
+    openFile->setToolTip("Open a file (Ctrl+O)");
+    connect(openFile, &QPushButton::clicked, this,
             &WelcomePage::openFileRequested);
-    buttons->addWidget(newBtn);
-    buttons->addSpacing(12);
-    buttons->addWidget(openBtn);
-    buttons->addStretch(1);
-    outer->addLayout(buttons);
+    actions->addWidget(openFile);
 
-    m_back = new QPushButton("←  Back to open files", this);
+    auto* newFile = new QPushButton("New File", content);
+    newFile->setMinimumHeight(34);
+    newFile->setToolTip("Create a new file (Ctrl+N)");
+    connect(newFile, &QPushButton::clicked, this,
+            &WelcomePage::newFileRequested);
+    actions->addWidget(newFile);
+    contentLayout->addLayout(actions);
+
+    m_back = new QPushButton("Back to open files", content);
     m_back->setFlat(true);
     m_back->hide();
     connect(m_back, &QPushButton::clicked, this,
             &WelcomePage::backToEditorRequested);
-    outer->addWidget(m_back, 0, Qt::AlignHCenter);
-    outer->addSpacing(18);
-
-    auto* recentLabel = new QLabel("Recent files", this);
-    QFont rf = recentLabel->font();
-    rf.setBold(true);
-    recentLabel->setFont(rf);
-    outer->addWidget(recentLabel);
+    contentLayout->addWidget(m_back, 0, Qt::AlignCenter);
+    contentLayout->addSpacing(10);
+    auto* recentLabel = new QLabel("Recent files", content);
+    recentLabel->setObjectName("welcomeSection");
+    contentLayout->addWidget(recentLabel);
 
     m_emptyHint = new QLabel(
-        "No recent files yet — open one with Ctrl+O and it will show up here.",
-        this);
-    outer->addWidget(m_emptyHint);
+        "Your recently opened files will appear here.", content);
+    m_emptyHint->setObjectName("welcomeMuted");
+    contentLayout->addWidget(m_emptyHint);
 
-    m_recent = new QListWidget(this);
-    m_recent->setMaximumHeight(320);
+    m_recent = new QListWidget(content);
+    m_recent->setMinimumHeight(180);
     m_recent->setAlternatingRowColors(true);
     m_recent->setSelectionMode(QAbstractItemView::SingleSelection);
     connect(m_recent, &QListWidget::itemActivated, this,
@@ -77,17 +79,8 @@ WelcomePage::WelcomePage(QWidget* parent) : QWidget(parent) {
                 if (item)
                     emit fileActivated(item->data(Qt::UserRole).toString());
             });
-    outer->addWidget(m_recent);
-
-    outer->addSpacing(10);
-    auto* hint = new QLabel(
-        "F9 compile & run  ·  Ctrl+\\ toggle comment  ·  "
-        "Ctrl+Space completion (C/C++)",
-        this);
-    hint->setAlignment(Qt::AlignCenter);
-    outer->addWidget(hint);
-
-    outer->addStretch(2);
+    contentLayout->addWidget(m_recent, 1);
+    outer->addWidget(content, 1);
 }
 
 void WelcomePage::setBackVisible(bool visible) {
@@ -122,10 +115,25 @@ void WelcomePage::applyTheme(const Theme& t) {
 
     m_recent->setPalette(p);
 
+    const QString panel = t.panelBg.isValid() ? t.panelBg.name() : t.consoleBg.name();
+    const QString border = t.border.isValid() ? t.border.name() : "#3b3f46";
+    const QString accent = t.accent.isValid() ? t.accent.name() : "#74ade8";
     const QString muted =
         t.mutedFg.isValid()
             ? t.mutedFg.name()
             : (t.editorBg.lightness() < 128 ? "#9aa0a6" : "#6a6a6a");
-    m_subtitle->setStyleSheet("color: " + muted + ";");
-    m_emptyHint->setStyleSheet("color: " + muted + ";");
+    setStyleSheet(QString(
+                      "#welcomeSection { color: %3; font-weight: 600; }"
+                      "#welcomeMuted { color: %4; }"
+                      "QPushButton { "
+                      "background: transparent; color: %3; border: 1px solid "
+                      "transparent; border-radius: 4px; padding: 6px; }"
+                      "QPushButton:hover "
+                      "{ background: %2; }"
+                      "#welcomePrimary { border-color: %5; color: %5; }"
+                      "#welcomePrimary:hover { background: %5; color: %1; }"
+                      "QListWidget { background: %6; border: 1px solid %2; "
+                      "color: %3; }")
+                      .arg(panel, border, t.editorFg.name(), muted, accent,
+                           t.editorBg.name()));
 }

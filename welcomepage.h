@@ -22,6 +22,7 @@ public:
 signals:
     void newFileRequested();
     void openFileRequested();
+    void openProjectRequested();
     void fileActivated(const QString& path);
     void backToEditorRequested();
 

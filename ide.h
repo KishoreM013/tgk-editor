@@ -64,6 +64,7 @@ private slots:
     void showHome();
     void showEditorPage();
     void autoSaveNow();
+    void showTerminal();
 
 private:
     struct Doc; // one open file / tab
@@ -100,6 +101,7 @@ private:
     void addRecent(const QString& path);
     void refreshRecent();
     void rebuildRecentMenu();
+    void toggleTabPinned(int index);
 
     // open documents / tabs
     QTabWidget* m_docTabs = nullptr;
@@ -132,6 +134,7 @@ private:
     // build / run
     QProcess* m_buildProc = nullptr;
     QProcess* m_runProc = nullptr;
+    QProcess* m_terminalProc = nullptr;
     bool m_runAfterBuild = false;
     QString m_binaryPath;
     QString m_buildFile; // file the current build/run belongs to
@@ -141,6 +144,8 @@ private:
 
     // widgets
     QPlainTextEdit* m_console = nullptr;
+    QPlainTextEdit* m_terminalOutput = nullptr;
+    QLineEdit* m_terminalInput = nullptr;
     QTableWidget* m_problems = nullptr;
     QLineEdit* m_inputLine = nullptr;
     QLabel* m_posLabel = nullptr;
