@@ -79,6 +79,7 @@ Ide::Ide(QWidget* parent) : QMainWindow(parent) {
 
     m_editorFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     m_editorFont.setPointSize(11);
+    m_origPalette = qApp->palette();
 
     m_completer = new QCompleter(this);
     m_completerModel = new QStringListModel(this);
@@ -115,7 +116,7 @@ Ide::Ide(QWidget* parent) : QMainWindow(parent) {
     setupUi();
     setupActions();
 
-    applyTheme(findTheme(QSettings().value("theme", "classic").toString()));
+    applyTheme(findTheme(QSettings().value("theme", "zed-dark").toString()));
 
     loadRecent();
     refreshRecent();
@@ -175,7 +176,92 @@ void Ide::setIndent(int width, bool useTabs) {    m_tabWidth = qBound(1, width, 
         2500);
 }
 
-void Ide::applyTheme(const Theme& t) {    m_theme = t;
+static QString zedChromeStyle(const Theme& t) {
+    const bool dark = t.editorBg.lightness() < 128;
+    const QString hover = dark ? "#363C46" : "#DFDFE0";
+    const QString selected = dark ? "#454A56" : "#CACACA";
+    const QString thumb = dark ? "#4E5561" : "#C3C3C8";
+    QString css = QStringLiteral(R"CSS(
+QMainWindow, QDialog { background: %WIN%; }
+QMenuBar { background: %WIN%; color: %TEXT%; padding: 2px 6px; }
+QMenuBar::item { background: transparent; padding: 4px 8px; border-radius: 4px; }
+QMenuBar::item:selected { background: %HOVER%; }
+QMenu { background: %PANEL%; color: %TEXT%; border: 1px solid %BORDER%; padding: 4px; }
+QMenu::item { padding: 5px 26px 5px 18px; border-radius: 4px; }
+QMenu::item:selected { background: %SELECTED%; color: %TEXT%; }
+QMenu::separator { height: 1px; background: %BORDER%; margin: 4px 8px; }
+QToolBar { background: %PANEL%; border: none; border-bottom: 1px solid %BORDER%; spacing: 3px; padding: 3px 6px; }
+QToolButton { background: transparent; color: %TEXT%; border: none; border-radius: 4px; padding: 4px 8px; }
+QToolButton:hover { background: %HOVER%; }
+QToolButton:pressed { background: %SELECTED%; }
+QToolBar QLabel, QToolBar QCheckBox { color: %TEXT%; }
+QStatusBar { background: %WIN%; color: %MUTED%; border-top: 1px solid %BORDER%; }
+QStatusBar::item { border: none; }
+QStatusBar QLabel { color: %MUTED%; padding: 0 6px; }
+QTabWidget::pane { border: none; }
+QTabBar { background: %PANEL%; }
+QTabBar::tab { background: %PANEL%; color: %MUTED%; border: none; padding: 6px 12px; margin-right: 1px; }
+QTabBar::tab:selected { background: %EDITOR%; color: %TEXT%; }
+QTabBar::tab:hover:!selected { background: %HOVER%; }
+QDockWidget { color: %TEXT%; }
+QDockWidget::title { background: %PANEL%; padding: 4px 8px; }
+QSplitter::handle { background: %BORDER%; }
+QHeaderView::section { background: %PANEL%; color: %MUTED%; border: none; border-bottom: 1px solid %BORDER%; padding: 4px 6px; }
+QTableWidget { border: none; gridline-color: %BORDER%; }
+QLineEdit, QPlainTextEdit { border: none; }
+QScrollBar:vertical { background: transparent; width: 10px; margin: 0; }
+QScrollBar::handle:vertical { background: %THUMB%; min-height: 24px; border-radius: 5px; }
+QScrollBar::handle:vertical:hover { background: %MUTED%; }
+QScrollBar:horizontal { background: transparent; height: 10px; margin: 0; }
+QScrollBar::handle:horizontal { background: %THUMB%; min-width: 24px; border-radius: 5px; }
+QScrollBar::handle:horizontal:hover { background: %MUTED%; }
+QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
+QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+)CSS");
+    css.replace("%WIN%", t.windowBg.name());
+    css.replace("%PANEL%", t.panelBg.name());
+    css.replace("%BORDER%", t.border.name());
+    css.replace("%TEXT%", t.editorFg.name());
+    css.replace("%MUTED%", t.mutedFg.name());
+    css.replace("%EDITOR%", t.editorBg.name());
+    css.replace("%HOVER%", hover);
+    css.replace("%SELECTED%", selected);
+    css.replace("%THUMB%", thumb);
+    return css;
+}
+
+void Ide::applyTheme(const Theme& t) {
+    m_theme = t;
+
+    // Zed themes also color the window chrome (menus, tabs, toolbar, status
+    // bar). Other themes keep the system palette.
+    if (t.windowBg.isValid()) {
+        const bool dark = t.editorBg.lightness() < 128;
+        QPalette p = m_origPalette;
+        p.setColor(QPalette::Window, t.windowBg);
+        p.setColor(QPalette::WindowText, t.editorFg);
+        p.setColor(QPalette::Base, t.editorBg);
+        p.setColor(QPalette::AlternateBase, t.panelBg);
+        p.setColor(QPalette::Text, t.editorFg);
+        p.setColor(QPalette::Button, t.panelBg);
+        p.setColor(QPalette::ButtonText, t.editorFg);
+        p.setColor(QPalette::Highlight,
+                   QColor(dark ? "#454A56" : "#CACACA"));
+        p.setColor(QPalette::HighlightedText, t.editorFg);
+        p.setColor(QPalette::ToolTipBase, t.panelBg);
+        p.setColor(QPalette::ToolTipText, t.editorFg);
+        p.setColor(QPalette::PlaceholderText, t.mutedFg);
+        p.setColor(QPalette::Link, t.accent);
+        p.setColor(QPalette::Disabled, QPalette::Text, t.mutedFg);
+        p.setColor(QPalette::Disabled, QPalette::WindowText, t.mutedFg);
+        p.setColor(QPalette::Disabled, QPalette::ButtonText, t.mutedFg);
+        qApp->setPalette(p);
+        qApp->setStyleSheet(zedChromeStyle(t));
+    } else {
+        qApp->setStyleSheet(QString());
+        qApp->setPalette(m_origPalette);
+    }
+
     for (Doc* d : m_docList) {
         d->editor->setTheme(t);
         d->highlighter->setTheme(t);
@@ -366,7 +452,7 @@ void Ide::setupActions() {
     viewMenu->addSeparator();
     QActionGroup* themeGroup = new QActionGroup(this);
     QString currentTheme =
-        QSettings().value("theme", "classic").toString();
+        QSettings().value("theme", "zed-dark").toString();
     for (const Theme& t : builtinThemes()) {
         QAction* a = viewMenu->addAction(t.name);
         a->setCheckable(true);

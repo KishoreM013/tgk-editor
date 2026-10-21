@@ -16,8 +16,10 @@ powered by **clangd** (the same engine behind VS Code's C/C++ support).
   in `~/.config/tgk/tgkeditor.json` (editable JSON; add your own languages!)
 - **Code completion** for C/C++ (Ctrl+Space or automatic): real semantic
   suggestions from clangd
-- **5 themes** (View → Theme), persisted between sessions:
-  Dev-C++ Classic, Dark, Monokai, Solarized Light/Dark
+- **7 themes** (View → Theme), persisted between sessions:
+  Zed One Dark (default), Zed One Light, Dev-C++ Classic, Dark, Monokai,
+  Solarized Light/Dark. The Zed themes also style the tabs, toolbar, menus and
+  status bar with Zed's exact One palette.
 - Syntax highlighting for C/C++/Java/Python with language-aware comment toggle
   (**Ctrl+\\**)
 - **Auto-close brackets** — `(`, `[`, `{` and quotes insert their partner;

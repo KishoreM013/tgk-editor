@@ -3,6 +3,7 @@
 #include <QFont>
 #include <QHash>
 #include <QMainWindow>
+#include <QPalette>
 #include <QProcess>
 #include <QStringList>
 #include <QVector>
@@ -105,6 +106,7 @@ private:
     QHash<CodeEditor*, Doc*> m_docs;
     QVector<Doc*> m_docList;
     Theme m_theme;
+    QPalette m_origPalette; // system palette, restored for non-Zed themes
     QFont m_editorFont;
     int m_untitledCounter = 0;
     int m_tabWidth = 4;

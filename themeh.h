@@ -18,10 +18,33 @@ struct Theme {
     QColor keyword, type, str, chr, num, comment, func, preproc;
     // diagnostics (squiggles in the editor and gutter markers)
     QColor diagError, diagWarning, diagInfo;
+    // window chrome (optional; invalid = keep the system palette). Zed-style
+    // themes fill these in so the whole window matches the editor.
+    QColor windowBg, panelBg, border, mutedFg, accent;
 };
 
 inline QVector<Theme> builtinThemes() {
     return {
+        {// Zed One Dark — the default; palette taken from Zed's One theme
+         "zed-dark", "Zed One Dark",
+         "#282C33", "#ACB2BE", "#2D323A", "#3D74ADE8",
+         "#282C33", "#4E5A5F", "#D0D4DA",
+         "#282C33", "#ACB2BE",
+         "#B477CF", "#6EB4BF", "#A1C181", "#A1C181", "#BF956A",
+         "#5D636F", "#73ADE9", "#B477CF",
+         "#D07277", "#DEC184", "#74ADE8",
+         "#3B414D", "#2F343E", "#464B57", "#A9AFBC", "#74ADE8"},
+
+        {// Zed One Light
+         "zed-light", "Zed One Light",
+         "#FAFAFA", "#242529", "#F0F0F1", "#3D5C78E2",
+         "#FAFAFA", "#B4B4BB", "#44454B",
+         "#FAFAFA", "#242529",
+         "#A449AB", "#3882B7", "#649F57", "#649F57", "#AD6E25",
+         "#A2A3A7", "#5B79E3", "#A449AB",
+         "#D36151", "#A48819", "#5C78E2",
+         "#DCDCDD", "#EBEBEC", "#C9C9CA", "#58585A", "#5C78E2"},
+
         {// 1. Dev-C++ classic light — comfortable default
          "classic", "Dev-C++ Classic (Light)",
          "#FFFFFF", "#1E1E1E", "#EAF1FB", "#BBD7F0",

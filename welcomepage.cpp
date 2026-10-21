@@ -123,7 +123,9 @@ void WelcomePage::applyTheme(const Theme& t) {
     m_recent->setPalette(p);
 
     const QString muted =
-        t.editorBg.lightness() < 128 ? "#9aa0a6" : "#6a6a6a";
+        t.mutedFg.isValid()
+            ? t.mutedFg.name()
+            : (t.editorBg.lightness() < 128 ? "#9aa0a6" : "#6a6a6a");
     m_subtitle->setStyleSheet("color: " + muted + ";");
     m_emptyHint->setStyleSheet("color: " + muted + ";");
 }
