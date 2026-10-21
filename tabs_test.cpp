@@ -3,17 +3,20 @@
 
 #include <QApplication>
 #include <QAction>
-#include <QCheckBox>
 #include <QDir>
 #include <QDockWidget>
 #include <QFile>
 #include <QKeyEvent>
+#include <QLabel>
+#include <QMenuBar>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QStackedWidget>
 #include <QTabWidget>
 #include <QTextCharFormat>
 #include <QTextDocument>
+#include <QToolBar>
+#include <QToolButton>
 
 #include <cstdio>
 
@@ -81,6 +84,16 @@ int main(int argc, char** argv) {
     check(tabs != nullptr, "tab widget exists");
     check(stack != nullptr, "stacked page exists");
     check(tabs->count() == 0, "starts with no tabs");
+
+    // Compile/run controls should live on the menu bar, with no extra toolbar.
+    check(w.findChild<QToolBar*>() == nullptr, "no separate toolbar row");
+    QStringList runButtons;
+    if (QWidget* runBar = w.menuBar()->cornerWidget(Qt::TopRightCorner))
+        for (QToolButton* b : runBar->findChildren<QToolButton*>())
+            runButtons << b->text();
+    check(runButtons.contains("Build") && runButtons.contains("Run") &&
+              runButtons.contains("Stop"),
+          "build/run/stop buttons sit on the menu bar row");
 
     w.openFileFromPath(f1);
     check(tabs->count() == 1, "opening one file creates one tab");
@@ -220,10 +233,11 @@ int main(int argc, char** argv) {
     check(editor->toPlainText() == "   ", "tab width is configurable (3 spaces)");
 
     // --- auto save ----------------------------------------------------
-    auto* autoSaveBox = w.findChild<QCheckBox*>();
-    check(autoSaveBox != nullptr, "auto-save checkbox exists");
-    if (autoSaveBox) {
-        autoSaveBox->setChecked(true);
+    auto* autoSaveAction = w.findChild<QAction*>("autoSaveAction");
+    check(autoSaveAction != nullptr && autoSaveAction->isCheckable(),
+          "auto-save toggle exists in the File menu");
+    if (autoSaveAction) {
+        autoSaveAction->setChecked(true);
         tabs->setCurrentIndex(0);
         auto* ed0 = qobject_cast<CodeEditor*>(tabs->widget(0));
         QTextCursor c = ed0->textCursor();

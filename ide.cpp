@@ -47,7 +47,7 @@
 #include <QTextCursor>
 #include <QTextStream>
 #include <QTimer>
-#include <QToolBar>
+#include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -147,9 +147,9 @@ void Ide::setAutoSave(bool enabled) {
     QSettings s;
     s.setValue("autoSave", m_autoSave);
     s.sync();
-    if (m_autoSaveCheck && m_autoSaveCheck->isChecked() != enabled) {
-        QSignalBlocker blocker(m_autoSaveCheck);
-        m_autoSaveCheck->setChecked(enabled);
+    if (m_autoSaveAction && m_autoSaveAction->isChecked() != enabled) {
+        QSignalBlocker blocker(m_autoSaveAction);
+        m_autoSaveAction->setChecked(enabled);
     }
     if (enabled) {
         m_autoSaveTimer->start(); // catch up on anything already modified
@@ -200,11 +200,9 @@ QMenu { background: %PANEL%; color: %TEXT%; border: 1px solid %BORDER%; padding:
 QMenu::item { padding: 5px 26px 5px 18px; border-radius: 4px; }
 QMenu::item:selected { background: %SELECTED%; color: %TEXT%; }
 QMenu::separator { height: 1px; background: %BORDER%; margin: 4px 8px; }
-QToolBar#zedToolbar { background: %PANEL%; border: none; border-bottom: 1px solid %BORDER%; spacing: 2px; padding: 3px 7px; }
-QToolBar#zedToolbar QToolButton { background: transparent; color: %TEXT%; border: none; border-radius: 4px; padding: 4px 7px; }
+QToolButton { background: transparent; color: %TEXT%; border: none; border-radius: 4px; padding: 4px 10px; }
 QToolButton:hover { background: %HOVER%; }
 QToolButton:pressed { background: %SELECTED%; }
-QToolBar QLabel, QToolBar QCheckBox { color: %TEXT%; }
 QStatusBar { background: %WIN%; color: %MUTED%; border-top: 1px solid %BORDER%; }
 QStatusBar::item { border: none; }
 QStatusBar QLabel { color: %MUTED%; padding: 0 6px; }
@@ -451,6 +449,14 @@ void Ide::setupActions() {
     fileMenu->addAction("Save &As…", this, &Ide::saveFileAs,
                         QKeySequence::SaveAs);
     fileMenu->addSeparator();
+    m_autoSaveAction = fileMenu->addAction("Auto-&save");
+    m_autoSaveAction->setObjectName("autoSaveAction");
+    m_autoSaveAction->setCheckable(true);
+    m_autoSaveAction->setChecked(m_autoSave);
+    m_autoSaveAction->setToolTip(
+        "Automatically save files 1.2 s after you stop typing");
+    connect(m_autoSaveAction, &QAction::toggled, this, &Ide::setAutoSave);
+    fileMenu->addSeparator();
     fileMenu->addAction("&Close Tab", this,
                         [this] { closeTab(m_docTabs->currentIndex()); },
                         QKeySequence(Qt::CTRL | Qt::Key_W));
@@ -530,28 +536,26 @@ void Ide::setupActions() {
             "IntelliSense powered by clangd.");
     });
 
-    // Compact Zed-style command bar. File/project actions already have menu
-    // entries and single-key shortcuts, so the bar only keeps the run controls.
-    QToolBar* tb = addToolBar("Main");
-    tb->setObjectName("zedToolbar");
-    tb->setMovable(false);
-    tb->setToolButtonStyle(Qt::ToolButtonTextOnly);
-
-    m_autoSaveCheck = new QCheckBox("Auto-save", tb);
-    m_autoSaveCheck->setChecked(m_autoSave);
-    m_autoSaveCheck->setToolTip(
-        "Automatically save files 1.2 s after you stop typing");
-    connect(m_autoSaveCheck, &QCheckBox::toggled, this, &Ide::setAutoSave);
-    tb->addWidget(m_autoSaveCheck);
-
-    QAction* commentAction = tb->addAction("Comment", this, &Ide::toggleComment);
-    commentAction->setToolTip("Toggle comment (Ctrl+\\)");
-    QAction* buildAction = tb->addAction("Build", this, &Ide::compileOnly);
-    buildAction->setToolTip("Compile only (F8)");
-    QAction* runAction = tb->addAction("Run", this, &Ide::compileAndRun);
-    runAction->setToolTip("Compile & run (F9)");
-    QAction* stopAction = tb->addAction("Stop", this, &Ide::stopProgram);
-    stopAction->setToolTip("Stop running program (F10)");
+    // Compile & run buttons sit at the right end of the menu bar, so no
+    // separate toolbar row is needed.
+    auto* runBar = new QWidget(this);
+    auto* runLayout = new QHBoxLayout(runBar);
+    runLayout->setContentsMargins(0, 0, 8, 0);
+    runLayout->setSpacing(2);
+    auto addRunButton = [&](const QString& text, const QString& tip,
+                            void (Ide::*slot)()) {
+        auto* b = new QToolButton(runBar);
+        b->setText(text);
+        b->setToolTip(tip);
+        b->setAutoRaise(true);
+        b->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        connect(b, &QToolButton::clicked, this, slot);
+        runLayout->addWidget(b);
+    };
+    addRunButton("Build", "Compile only (F8)", &Ide::compileOnly);
+    addRunButton("Run", "Compile & run (F9)", &Ide::compileAndRun);
+    addRunButton("Stop", "Stop the running program (F10)", &Ide::stopProgram);
+    menuBar()->setCornerWidget(runBar, Qt::TopRightCorner);
 
     // Tab switching: Ctrl+Tab / Ctrl+Shift+Tab
     auto* nextTab = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Tab), this);

@@ -14,6 +14,7 @@
 
 class CodeEditor;
 class CppHighlighter;
+class QAction;
 class QCompleter;
 class QStringListModel;
 class QPlainTextEdit;
@@ -24,7 +25,6 @@ class QTabWidget;
 class QCloseEvent;
 class QStackedWidget;
 class QMenu;
-class QCheckBox;
 class QTimer;
 class QDockWidget;
 class WelcomePage;
@@ -114,7 +114,7 @@ private:
     int m_tabWidth = 4;
     bool m_useTabs = false;
     bool m_autoSave = false;
-    QCheckBox* m_autoSaveCheck = nullptr;
+    QAction* m_autoSaveAction = nullptr;
     QTimer* m_autoSaveTimer = nullptr;
 
     // active document (shortcuts into the active Doc)
