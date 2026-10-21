@@ -734,6 +734,20 @@ Ide::Doc* Ide::createDoc(const QString& path, const QString& content) {
 
     connect(doc->editor, &CodeEditor::completionRequested, this,
             &Ide::onCompletionRequested);
+
+    // Completion requests only fire while typing. Paste, undo and delete must
+    // also refresh clangd, otherwise its squiggles keep describing the old
+    // buffer. Debounce so every keystroke is not a full didChange message.
+    auto* syncTimer = new QTimer(doc->editor);
+    syncTimer->setSingleShot(true);
+    syncTimer->setInterval(150);
+    connect(doc->editor->document(), &QTextDocument::contentsChanged, syncTimer,
+            [syncTimer] { syncTimer->start(); });
+    connect(syncTimer, &QTimer::timeout, this, [this, doc] {
+        if (doc->clangdOpen && m_clangd->isRunning() && !doc->path.isEmpty())
+            m_clangd->changeDocument(doc->path, doc->editor->toPlainText());
+    });
+
     connect(doc->editor, &QPlainTextEdit::cursorPositionChanged, this,
             &Ide::updateStatusCursor);
     connect(doc->editor->document(), &QTextDocument::modificationChanged, this,

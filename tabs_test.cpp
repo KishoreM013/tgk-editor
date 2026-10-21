@@ -150,6 +150,17 @@ int main(int argc, char** argv) {
     editor->setDiagnostics({});
     check(countWaves(editor) == 1,
           "clearing clangd marks keeps compiler marks");
+
+    // Compiler marks belong to the last build and must not underline the new
+    // text after the user fixes the code.
+    {
+        QTextCursor editCursor = editor->textCursor();
+        editCursor.movePosition(QTextCursor::End);
+        editCursor.insertText("\n// edited\n");
+    }
+    check(countWaves(editor) == 0,
+          "editing clears stale compiler squiggles");
+
     editor->setBuildDiagnostics({});
     check(countWaves(editor) == 0, "all diagnostic marks can be cleared");
     editor->document()->setModified(true);

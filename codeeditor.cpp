@@ -2,6 +2,7 @@
 
 #include <QPainter>
 #include <QTextBlock>
+#include <QTextDocument>
 #include <QTextEdit>
 #include <QTextCharFormat>
 #include <QScrollBar>
@@ -26,6 +27,18 @@ CodeEditor::CodeEditor(QWidget* parent) : QPlainTextEdit(parent) {
     m_completionTimer->setInterval(250);
     connect(m_completionTimer, &QTimer::timeout,
             this, &CodeEditor::completionRequested);
+
+    // Compiler marks belong to the last build. Once the text changes they are
+    // stale and would underline the wrong tokens, so drop them immediately.
+    connect(document(), &QTextDocument::contentsChanged, this, [this] {
+        if (m_buildDiags.isEmpty())
+            return;
+        m_buildDiags.clear();
+        rebuildDiagnosticIndex();
+        updateExtraSelections();
+        m_lineNumberArea->update();
+        viewport()->update();
+    });
 
     viewport()->setMouseTracking(true); // needed for diagnostic tooltips
     updateLineNumberAreaWidth(0);
