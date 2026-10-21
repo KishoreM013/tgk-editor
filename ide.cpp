@@ -214,6 +214,8 @@ QTabBar::tab:hover:!selected { background: %HOVER%; }
 QDockWidget { color: %TEXT%; border: none; }
 QDockWidget::title { background: %PANEL%; padding: 7px 10px; border-bottom: 1px solid %BORDER%; }
 QDockWidget::close-button, QDockWidget::float-button { background: transparent; border: none; }
+#dockTitleBar { background: %PANEL%; border-bottom: 1px solid %BORDER%; }
+#dockTitleBar QLabel { color: %TEXT%; }
 QSplitter::handle { background: %BORDER%; }
 QHeaderView::section { background: %PANEL%; color: %MUTED%; border: none; border-bottom: 1px solid %BORDER%; padding: 4px 6px; }
 QTableWidget { border: none; gridline-color: %BORDER%; }
@@ -413,6 +415,35 @@ void Ide::setupUi() {
                                    Qt::RightDockWidgetArea);
     m_project = new ProjectPanel(m_projectDock);
     m_projectDock->setWidget(m_project);
+
+    // Explorer title bar: pinned-only box right next to the close button.
+    auto* dockTitle = new QWidget(m_projectDock);
+    dockTitle->setObjectName("dockTitleBar");
+    dockTitle->setAutoFillBackground(true);
+    auto* dockTitleLayout = new QHBoxLayout(dockTitle);
+    dockTitleLayout->setContentsMargins(8, 3, 4, 3);
+    dockTitleLayout->setSpacing(6);
+    auto* dockTitleLabel = new QLabel("Explorer", dockTitle);
+    QFont dockTitleFont = dockTitleLabel->font();
+    dockTitleFont.setBold(true);
+    dockTitleLabel->setFont(dockTitleFont);
+    dockTitleLayout->addWidget(dockTitleLabel);
+    dockTitleLayout->addStretch(1);
+    if (QCheckBox* pinnedOnly = m_project->pinnedOnlyToggle()) {
+        pinnedOnly->setParent(dockTitle);
+        dockTitleLayout->addWidget(pinnedOnly);
+        pinnedOnly->show();
+    }
+    auto* dockClose = new QToolButton(dockTitle);
+    dockClose->setText(QString::fromUtf8("×"));
+    dockClose->setToolTip("Hide the Explorer");
+    dockClose->setAutoRaise(true);
+    dockClose->setFixedSize(20, 20);
+    connect(dockClose, &QToolButton::clicked, m_projectDock,
+            &QDockWidget::close);
+    dockTitleLayout->addWidget(dockClose);
+    m_projectDock->setTitleBarWidget(dockTitle);
+
     m_projectDock->setMinimumWidth(180);
     addDockWidget(Qt::LeftDockWidgetArea, m_projectDock);
     resizeDocks({m_projectDock}, {250}, Qt::Horizontal);

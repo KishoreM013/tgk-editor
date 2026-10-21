@@ -131,11 +131,15 @@ ProjectPanel::ProjectPanel(QWidget* parent) : QWidget(parent) {
     m_rootLabel->setFont(bold);
     rootRow->addWidget(m_rootLabel, 1);
 
-    m_onlyPinned = new QCheckBox("Pinned only", this);
+    // Textless toggle: it is shown in the Explorer title bar next to the
+    // close button. Empty text keeps that row compact.
+    m_onlyPinned = new QCheckBox(this);
     m_onlyPinned->setToolTip(
         "Show only files whose check box is ticked.\n"
         "Tick files in the tree first (Ctrl+click to select several).");
-    rootRow->addWidget(m_onlyPinned);
+    m_onlyPinned->setText(QString());
+    m_onlyPinned->hide();
+
     rootRow->addWidget(pinBtn);
     rootRow->addWidget(refreshBtn);
     outer->addLayout(rootRow);

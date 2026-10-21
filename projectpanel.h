@@ -57,6 +57,9 @@ public:
     void setOnlyPinned(bool only);
     bool onlyPinned() const;
 
+    // The pinned-only toggle lives in the Explorer title bar; Ide reparents it.
+    QCheckBox* pinnedOnlyToggle() const { return m_onlyPinned; }
+
     void applyTheme(const Theme& theme);
     void revealFile(const QString& path);
 
