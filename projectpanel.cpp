@@ -117,10 +117,6 @@ ProjectPanel::ProjectPanel(QWidget* parent) : QWidget(parent) {
     refreshBtn->setToolTip("Refresh the tree");
     refreshBtn->setFixedWidth(30);
 
-    auto* pinBtn = new QPushButton("Pin", this);
-    pinBtn->setToolTip("Tick all selected files (Ctrl+click to select several)");
-    pinBtn->setFixedWidth(38);
-
     auto* rootRow = new QHBoxLayout();
     rootRow->setContentsMargins(0, 0, 0, 0);
     rootRow->setSpacing(4);
@@ -140,7 +136,6 @@ ProjectPanel::ProjectPanel(QWidget* parent) : QWidget(parent) {
     m_onlyPinned->setText(QString());
     m_onlyPinned->hide();
 
-    rootRow->addWidget(pinBtn);
     rootRow->addWidget(refreshBtn);
     outer->addLayout(rootRow);
 
@@ -166,8 +161,6 @@ ProjectPanel::ProjectPanel(QWidget* parent) : QWidget(parent) {
     outer->addWidget(m_tree, 1);
 
     connect(refreshBtn, &QPushButton::clicked, this, &ProjectPanel::refresh);
-    connect(pinBtn, &QPushButton::clicked, this,
-            [this] { pinSelection(true); });
     connect(m_onlyPinned, &QCheckBox::toggled, this, [this](bool on) {
         m_proxy->setOnlyPinned(on);
         QSettings s;

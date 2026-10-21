@@ -609,6 +609,59 @@ void Ide::setupActions() {
 }
 
 namespace {
+static int editDistance(const QString& a, const QString& b) {
+    QVector<int> prev(b.size() + 1), cur(b.size() + 1);
+    for (int j = 0; j <= b.size(); ++j)
+        prev[j] = j;
+    for (int i = 1; i <= a.size(); ++i) {
+        cur[0] = i;
+        for (int j = 1; j <= b.size(); ++j) {
+            const int substitute =
+                prev[j - 1] + (a.at(i - 1) == b.at(j - 1) ? 0 : 1);
+            cur[j] = qMin(qMin(prev[j] + 1, cur[j - 1] + 1), substitute);
+        }
+        prev.swap(cur);
+    }
+    return prev.at(b.size());
+}
+
+// clangd only reports "invalid preprocessing directive". For a near miss such
+// as "#inlcude", append the correction the compiler would suggest.
+static QString augmentDiagnostic(const QString& message,
+                                 const QString& lineText) {
+    if (!message.contains(QLatin1String("invalid preprocessing directive"),
+                          Qt::CaseInsensitive))
+        return message;
+    const QString text = lineText.trimmed();
+    if (!text.startsWith('#'))
+        return message;
+    int end = 1;
+    while (end < text.size() &&
+           (text.at(end).isLetterOrNumber() || text.at(end) == '_'))
+        ++end;
+    const QString word = text.mid(1, end - 1);
+    if (word.isEmpty())
+        return message;
+
+    static const QStringList known = {
+        "include", "include_next", "define", "undef", "if", "ifdef",
+        "ifndef", "elif", "else", "endif", "pragma", "error", "warning",
+        "line"};
+    QString best;
+    int bestDistance = 3;
+    for (const QString& candidate : known) {
+        const int distance = editDistance(word.toLower(), candidate);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            best = candidate;
+        }
+    }
+    if (!best.isEmpty() && best != word.toLower() && bestDistance <= 2)
+        return message +
+               QStringLiteral(" (did you mean #%1?)").arg(best);
+    return message;
+}
+
 // Human-readable form for the console, e.g. g++ "/a b/x.cpp" -o "/a b/x.bin".
 QString displayCommand(const QStringList& parts) {
     QStringList out;
@@ -1709,7 +1762,10 @@ void Ide::onDiagnostics(const QString& path,
         m.endLine = d.endLine;
         m.endCol = d.endCol;
         m.severity = d.severity == 1 ? 1 : d.severity == 2 ? 2 : 3;
-        m.message = d.message;
+        const QTextBlock line =
+            target->editor->document()->findBlockByNumber(d.line);
+        m.message = augmentDiagnostic(
+            d.message, line.isValid() ? line.text() : QString());
         marks.append(m);
     }
     target->editor->setDiagnostics(marks); // red squiggles in that tab
@@ -1723,14 +1779,15 @@ void Ide::onDiagnostics(const QString& path,
     // simplest reliable approach: wipe and refill)
     m_problems->setRowCount(0);
     int errors = 0;
-    for (const ClangdDiagnostic& d : diags) {
+    for (int i = 0; i < diags.size(); ++i) {
+        const ClangdDiagnostic& d = diags.at(i);
         QString sev = d.severity == 1   ? "error"
                       : d.severity == 2 ? "warning"
                                         : "note";
         if (d.severity == 1)
             ++errors;
-        addProblemRow(sev, d.message, QFileInfo(path).fileName(), d.line + 1,
-                      d.col + 1);
+        addProblemRow(sev, marks.at(i).message, QFileInfo(path).fileName(),
+                      d.line + 1, d.col + 1);
     }
     m_intelLabel->setText(errors > 0
                               ? QString("IntelliSense: on — %1 error(s)").arg(errors)
